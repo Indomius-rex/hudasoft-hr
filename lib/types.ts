@@ -33,4 +33,4 @@ export type Settings = {id:number;company_name:string;timezone:string;weekend_da
 export type Audit = {id:string;actor_id:string|null;action:string;entity:string;record_id:string;created_at:string;details:unknown};
 export type Data = {employees:Employee[];attendance:Attendance[];breaks:WorkBreak[];leaves:Leave[];adjustments:Adjustment[];holidays:Holiday[];customers:Customer[];projects:Project[];allocations:Allocation[];settings:Settings;audit:Audit[]};
 export type Entity = 'employees'|'customers'|'projects'|'allocations'|'holidays';
-export const emptyData:Data = {employees:[],attendance:[],breaks:[],leaves:[],adjustments:[],holidays:[],customers:[],projects:[],allocations:[],audit:[],settings:{id:1,company_name:'Peoplewise',timezone:'Asia/Karachi',weekend_days:[0,6],work_start:'09:00',work_end:'18:00',grace_minutes:15}};
+export const emptyData:Data = {employees:[],attendance:[],breaks:[],leaves:[],adjustments:[],holidays:[],customers:[],projects:[],allocations:[],audit:[],settings:{id:1,company_name:'Hudasoft',timezone:'Asia/Karachi',weekend_days:[0,6],work_start:'09:00',work_end:'18:00',grace_minutes:15}};
