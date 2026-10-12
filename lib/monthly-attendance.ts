@@ -51,8 +51,10 @@ export function monthlyAttendance(employee: Employee, month: string, data: Data,
   }
 
   // ✅ Target calculation — monthly_days use karo agar set ho
-  const targetDays = monthlyDays ?? workingDays;
-  totalHours = targetDays * dailyHours;
+  const targetDays = monthlyDays 
+    ? Math.min(monthlyDays, workingDays) 
+    : workingDays;
+   totalHours = targetDays * dailyHours;
 
   const workedHours = workedMs / 3600000;
   const violationHours = Math.max(0, totalHours - workedHours);
