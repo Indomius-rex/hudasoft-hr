@@ -4,13 +4,15 @@ import {usePathname,useRouter} from 'next/navigation';
 import Link from 'next/link';
 import {LayoutDashboard,Users,Clock3,CalendarDays,CalendarOff,Building2,FolderKanban,Network,ClipboardCheck,Settings,LogOut,ChevronDown,ChevronLeft,ChevronRight,Plus,ArrowUpRight,Menu,X,Check,Download,Search,ShieldCheck,ArrowRight,UserRound,RefreshCw,Pencil,Trash2,BriefcaseBusiness,CheckCheck,Timer,Sun,FileClock} from 'lucide-react';
 import Workday, {BreakHistory} from './workday';
+import MonthlyGraph from './monthly-graph';
 import {monthlyAttendance} from '@/lib/monthly-attendance';
 import {workTotals,durationLabel} from '@/lib/breaks';
 import {useHRMS} from '@/lib/store';
 import {Employee,Entity,Project,Leave,Adjustment} from '@/lib/types';
-import {dayKey,addDays,dateRange,attendanceStatus,offDay,timeLabel,hours,balance,localToISO} from '@/lib/domain';
+import {dayKey,addDays,dateRange,attendanceStatus,offDay,timeLabel,hours,localToISO} from '@/lib/domain';
 import {supabase,demoEnabled} from '@/lib/supabase';
 import {Avatar,Badge,Empty,SearchBox,Modal,Form,Field} from './ui';
+
 
 const adminNav=[['overview','Overview',LayoutDashboard],['employees','Employees',Users],['attendance','Attendance',Clock3],['leaves','Leave management',CalendarDays],['off-days','Off-day calendar',CalendarOff],['allocations','Team allocation',Network],['approvals','Approvals',ClipboardCheck],['settings','Settings',Settings]] as const;
 const employeeNav=[['overview','Overview',LayoutDashboard],['attendance','My attendance',Clock3],['leaves','My leave',CalendarDays],['adjustments','Attendance adjustments',FileClock],['profile','My profile',UserRound]] as const;
@@ -75,7 +77,7 @@ export default function HRMS(){
 
   const [now,setNow]=useState(Date.now);
   useEffect(()=>{const tick=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(tick);},[]);
-
+  
   const today=dayKey(new Date(now),data.settings.timezone);
   const currentYear=Number(today.slice(0,4));
 
@@ -84,6 +86,13 @@ export default function HRMS(){
 
     // ✅ Sab employees (admin ke saath)
   const allEmployees=data.employees;
+
+  useEffect(()=>{
+    // Graph tab pe pehla employee auto-select karo
+    if(isAdmin && section==='attendance' && view==='graph' && !selectedEmployee && allEmployees.length > 0){
+      setSelectedEmployee(allEmployees[0].id);
+    }
+  },[isAdmin, section, view, selectedEmployee, allEmployees]);
 
   const pending=data.leaves.filter(l=>l.status==='pending').length+data.adjustments.filter(a=>a.status==='pending').length;
   const person=(id:string|null)=>data.employees.find(e=>e.id===id);
@@ -112,6 +121,17 @@ export default function HRMS(){
   const go=(slug:string)=>router.push(base+'/'+slug);
 
   function employeeCell(id:string|null){const e=person(id);return <div className="person"><Avatar name={e?.name||'Unknown'} small/><div><strong>{e?.name||'Unknown employee'}</strong><small>{e?.designation||'—'}</small></div></div>;}
+  function employeeLink(id:string|null){
+  const e=person(id);
+  if(!e)return employeeCell(id);
+  return <button
+    onClick={()=>{setSelectedEmployee(e.id);setView('graph');go('attendance');}}
+    style={{border:'0',background:'none',padding:0,cursor:'pointer',textAlign:'left',font:'inherit',color:'inherit'}}
+    title={'View '+e.name+' monthly graph'}
+  >
+    {employeeCell(id)}
+  </button>;
+}
   function heading(title:string,subtitle:string,button?:{label:string;fn:()=>void}){return <div className="page-heading"><div><h1>{title}</h1><p>{subtitle}</p></div>{button&&<button className="button primary" onClick={button.fn}><Plus size={18}/>{button.label}</button>}</div>;}
   function stat(label:string,value:string|number,caption:string,Icon:typeof Users,color='blue'){return <div className="stat"><div className="stat-top"><span>{label}</span><span className={'stat-icon '+color}><Icon size={19}/></span></div><strong>{value}</strong><small>{caption}</small></div>;}
 
@@ -164,7 +184,7 @@ export default function HRMS(){
         </div>
         <div className="stats">
           {stat('Today’s status',attendanceStatus(me!.id,today,data),offDay(today,data)||'Your attendance today',Clock3)}
-          {stat('Annual leave',balance(me!,'annual',currentYear,data).remaining,'Days available after pending requests',CalendarDays,'green')}
+          {stat('Accrued leaves',(me!.accrued_leaves||0).toFixed(1),`≈ ${(((me!.accrued_leaves||0))/((() => { if(me!.daily_hours) return me!.daily_hours; const [sH,sM]=(data.settings.work_start||'09:00').split(':').map(Number); const [eH,eM]=(data.settings.work_end||'18:00').split(':').map(Number); return (eH*60+eM-sH*60-sM)/60; })())).toFixed(1)} days · +${data.settings.accrual_rate} days/mo`,CalendarDays,'green')}
           {stat('My projects',data.allocations.filter(a=>a.employee_id===me!.id&&a.end_date>=today).length,'Current and upcoming assignments',FolderKanban,'purple')}
           {stat('Pending requests',data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='pending').length+data.adjustments.filter(a=>a.employee_id===me!.id&&a.status==='pending').length,'Awaiting admin review',ClipboardCheck,'orange')}
         </div>
@@ -196,7 +216,16 @@ export default function HRMS(){
       </div>
       <section className="panel">
         <div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search name, email or department…"/><select aria-label="Employee status" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
-        <div className="table-scroll"><table><thead><tr><th>EMPLOYEE</th><th>EMPLOYEE ID</th><th>DEPARTMENT</th><th>HOURS/DAY</th><th>DAYS/MONTH</th><th>JOINED</th><th>STATUS</th><th>ROLE</th><th/></tr></thead><tbody>{rows.map(e=><tr key={e.id}><td>{employeeCell(e.id)}</td><td>{e.employee_code}</td><td>{e.department}</td><td>{e.daily_hours || 9} h</td><td>{e.monthly_days ?`${e.monthly_days} days` : 'All'}</td><td>{fmt(e.joined_on)}</td><td><Badge>{e.status}</Badge></td><td className="capitalize">{e.role}</td><td><button className="icon-button" aria-label={'Edit '+e.name} onClick={()=>openEdit('employees',e)}><Pencil size={17}/></button></td></tr>)}</tbody></table></div>
+        <div className="table-scroll"><table><thead><tr><th>EMPLOYEE</th><th>EMPLOYEE ID</th><th>DEPARTMENT</th><th>HOURS/DAY</th><th>DAYS/MONTH</th><th>ACCRUED</th><th>JOINED</th><th>STATUS</th><th>ROLE</th><th/></tr></thead><tbody>{rows.map(e=><tr key={e.id}><td>{employeeLink(e.id)}</td><td>{e.employee_code}</td><td>{e.department}</td><td>
+          {e.daily_hours 
+            ? `${e.daily_hours} h` 
+            : (() => {
+                const [sH, sM] = (data.settings.work_start || '09:00').split(':').map(Number);
+                const [eH, eM] = (data.settings.work_end || '18:00').split(':').map(Number);
+                return `${((eH * 60 + eM - sH * 60 - sM) / 60).toFixed(1)} h`;
+              })()
+          }
+        </td><td>{e.monthly_days ?`${e.monthly_days} days` : 'All'}</td><td><strong>{(e.accrued_leaves||0).toFixed(1)} h</strong><small>≈ {(((e.accrued_leaves||0))/(e.daily_hours||9)).toFixed(1)} d</small></td><td>{fmt(e.joined_on)}</td><td><Badge>{e.status}</Badge></td><td className="capitalize">{e.role}</td><td><button className="icon-button" aria-label={'Edit '+e.name} onClick={()=>openEdit('employees',e)}><Pencil size={17}/></button></td></tr>)}</tbody></table></div>
         {!rows.length&&<Empty title="No employees found" text="Add an employee or try a different search."/>}
         <div className="panel-foot">{rows.length} employees</div>
       </section>
@@ -214,26 +243,45 @@ export default function HRMS(){
       {heading(isAdmin?'Attendance':'My attendance',isAdmin?'Every workday, accounted for.':'Your workdays at a glance.',!isAdmin?{label:'Request adjustment',fn:()=>setModal({kind:'adjustment'})}:undefined)}
       <section className="panel">
         <div className="toolbar">
-          <div className="tabs">{isAdmin&&<button className={view==='list'?'selected':''} onClick={()=>setView('list')}>Monthly summary</button>}<button className={view===(isAdmin?'daily':'list')?'selected':''} onClick={()=>setView(isAdmin?'daily':'list')}>Daily records</button><button className={view==='calendar'?'selected':''} onClick={()=>setView('calendar')}>Calendar</button></div>
+          <div className="tabs">{isAdmin&&<button className={view==='list'?'selected':''} onClick={()=>setView('list')}>Monthly summary</button>}<button className={view===(isAdmin?'daily':'list')?'selected':''} onClick={()=>setView(isAdmin?'daily':'list')}>Daily records</button><button className={view==='calendar'?'selected':''} onClick={()=>setView('calendar')}>Calendar</button><button className={view==='graph'?'selected':''} onClick={()=>setView('graph')}>Monthly graph</button></div>
           <div className="toolbar-group">
             {(view==='daily'||!isAdmin&&view==='list')?<input aria-label="Attendance date" type="date" value={date} onChange={e=>setDate(e.target.value)}/>:<><input type="month" aria-label="Attendance month" value={month} onChange={e=>setMonth(e.target.value)}/>{isAdmin&&view==='calendar'&&<select aria-label="Calendar employee" value={employeeId} onChange={e=>setSelectedEmployee(e.target.value)}>{allEmployees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select>}</>}
             <button className="button" onClick={()=>monthly?exportCSV(['Employee','Month','Total hours','Hours worked','Violations (hours)','Missing check-outs'],rows.map(e=>{const m=monthlyAttendance(e,month,data,now);return[e.name,month,m.totalHours,m.workedHours.toFixed(2),m.violationHours.toFixed(2),m.missingEntries];}),'attendance-monthly-'+month):exportCSV(['Employee','Date','Status','Check in','Check out','Actual worked hours'],view==='calendar'?days.map(d=>{const a=data.attendance.find(a=>a.employee_id===employeeId&&a.work_date===d);return [person(employeeId)?.name,d,attendanceStatus(employeeId,d,data),timeLabel(a?.check_in||null,data.settings.timezone),timeLabel(a?.check_out||null,data.settings.timezone),(workTotals(a,data.breaks,now).workedMs/3600000).toFixed(2)];}):rows.map(e=>{const a=data.attendance.find(a=>a.employee_id===e.id&&a.work_date===date);return[e.name,date,attendanceStatus(e.id,date,data),timeLabel(a?.check_in||null,data.settings.timezone),timeLabel(a?.check_out||null,data.settings.timezone),(workTotals(a,data.breaks,now).workedMs/3600000).toFixed(2)];}),'attendance-'+(view==='calendar'?month:date))}><Download size={16}/>Export</button>
           </div>
         </div>
         {monthly?<>
-          <div className="monthly-explanation"><strong>{new Date(month+'-01T12:00:00').toLocaleDateString('en-GB',{month:'long',year:'numeric'})}</strong></div>
-          <div className="table-scroll"><table><thead><tr><th>EMPLOYEE</th><th>TOTAL HOURS</th><th>HOURS WORKED</th><th>VIOLATIONS</th></tr></thead><tbody>{rows.map(e=>{const m=monthlyAttendance(e,month,data,now);return <tr key={e.id}><td>{employeeCell(e.id)}</td><td><strong>{m.totalHours} h</strong><small>{m.targetDays} days × {m.dailyHours} h</small></td><td><strong>{m.workedHours.toFixed(2)} h</strong>{m.missingEntries>0&&<small>{m.missingEntries} missing check-out(s) excluded</small>}</td><td><span className={m.violationHours>0?'monthly-deficit':'monthly-complete'}>{m.violationHours.toFixed(2)} h</span><small>{month}</small></td></tr>;})}</tbody></table></div>
-          {!rows.length&&<Empty/>}
-        </>:view==='calendar'?<>
-          <div className="calendar-legend">{['Present','Late','Absent','On leave','Off day','Missing entry'].map(s=><Badge key={s}>{s}</Badge>)}</div>
-          <div className="calendar">
-            <div className="calendar-week">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
-            <div className="calendar-grid">{Array.from({length:new Date(monthStart+'T12:00:00').getDay()},(_,i)=><div className="calendar-day blank" key={'empty'+i}/>)}{days.map(d=>{const status=attendanceStatus(employeeId,d,data);const a=data.attendance.find(a=>a.employee_id===employeeId&&a.work_date===d);return <button key={d} className={'calendar-day '+(d===today?'current-day':'')+' '+(offDay(d,data)?'off':'')} onClick={()=>setModal({kind:'day',row:{date:d,employee_id:employeeId}})}><strong>{Number(d.slice(8))}</strong><Badge>{status}</Badge><small>{a?.check_in?`${timeLabel(a.check_in,data.settings.timezone)} – ${timeLabel(a.check_out,data.settings.timezone)}`:offDay(d,data)||''}</small></button>;})}</div>
-          </div>
-        </>:<>
-          <div className="table-scroll"><table><thead><tr><th>EMPLOYEE</th><th>DATE</th><th>CHECK IN</th><th>CHECK OUT</th><th>ACTUAL WORKED HOURS</th><th>STATUS</th></tr></thead><tbody>{rows.map(e=>{const a=data.attendance.find(a=>a.employee_id===e.id&&a.work_date===date);return <tr key={e.id}><td>{employeeCell(e.id)}</td><td>{fmt(date)}</td><td>{timeLabel(a?.check_in||null,data.settings.timezone)}</td><td>{timeLabel(a?.check_out||null,data.settings.timezone)}</td><td>{a?.check_in?durationLabel(workTotals(a,data.breaks,now).workedMs):'—'}</td><td><Badge>{attendanceStatus(e.id,date,data)}</Badge></td></tr>;})}</tbody></table></div>
-          {!rows.length&&<Empty/>}
-        </>}
+  <div className="monthly-explanation"><strong>{new Date(month+'-01T12:00:00').toLocaleDateString('en-GB',{month:'long',year:'numeric'})}</strong></div>
+  <div className="table-scroll"><table><thead><tr><th>EMPLOYEE</th><th>TOTAL HOURS</th><th>HOURS WORKED</th><th>VIOLATIONS</th></tr></thead><tbody>{rows.map(e=>{const m=monthlyAttendance(e,month,data,now);return <tr key={e.id}><td>{employeeLink(e.id)}</td><td><strong>{m.totalHours} h</strong><small>{m.targetDays} days × {m.dailyHours} h</small></td><td><strong>{m.workedHours.toFixed(2)} h</strong>{m.missingEntries>0&&<small>{m.missingEntries} missing check-out(s) excluded</small>}</td><td><span className={m.violationHours>0?'monthly-deficit':'monthly-complete'}>{m.violationHours.toFixed(2)} h</span><small>{month}</small></td></tr>;})}</tbody></table></div>
+  {!rows.length&&<Empty/>}
+</>:view==='calendar'?<>
+  <div className="calendar-legend">{['Present','Late','Absent','On leave','Off day','Missing entry'].map(s=><Badge key={s}>{s}</Badge>)}</div>
+  <div className="calendar">
+    <div className="calendar-week">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
+    <div className="calendar-grid">{Array.from({length:new Date(monthStart+'T12:00:00').getDay()},(_,i)=><div className="calendar-day blank" key={'empty'+i}/>)}{days.map(d=>{const status=attendanceStatus(employeeId,d,data);const a=data.attendance.find(a=>a.employee_id===employeeId&&a.work_date===d);return <button key={d} className={'calendar-day '+(d===today?'current-day':'')+' '+(offDay(d,data)?'off':'')} onClick={()=>setModal({kind:'day',row:{date:d,employee_id:employeeId}})}><strong>{Number(d.slice(8))}</strong><Badge>{status}</Badge><small>{a?.check_in?`${timeLabel(a.check_in,data.settings.timezone)} – ${timeLabel(a.check_out,data.settings.timezone)}`:offDay(d,data)||''}</small></button>;})}</div>
+  </div>
+</>:view==='graph'?<>
+  {/* ← YAHAN NAYA BLOCK */}
+  {isAdmin&&<div className="toolbar standalone">
+    <select aria-label="Employee" value={employeeId} onChange={e=>setSelectedEmployee(e.target.value)}>
+      {allEmployees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+    </select>
+  </div>}
+  <MonthlyGraph data={data} employee={isAdmin?(person(employeeId)||me!):me!} month={month} now={now}/>
+</>:<>
+  <div className="table-scroll"><table><thead><tr><th>EMPLOYEE</th><th>DATE</th><th>CHECK IN</th><th>CHECK OUT</th><th>ACTUAL WORKED HOURS</th><th>STATUS</th></tr></thead><tbody>{rows.map(e=>{const a=data.attendance.find(a=>a.employee_id===e.id&&a.work_date===date);return <tr key={e.id}><td>
+  <button
+    onClick={()=>{
+      setSelectedEmployee(e.id);
+      setView('graph');
+      go('attendance');
+    }}
+    style={{border:'0',background:'none',padding:0,cursor:'pointer',textAlign:'left'}}
+  >
+    {employeeCell(e.id)}
+  </button>
+</td><td>{fmt(date)}</td><td>{timeLabel(a?.check_in||null,data.settings.timezone)}</td><td>{timeLabel(a?.check_out||null,data.settings.timezone)}</td><td>{a?.check_in?durationLabel(workTotals(a,data.breaks,now).workedMs):'—'}</td><td><Badge>{attendanceStatus(e.id,date,data)}</Badge></td></tr>;})}</tbody></table></div>
+  {!rows.length&&<Empty/>}
+</>}
       </section>
       <p className="muted footnote">All times shown in {data.settings.timezone}. Worked hours exclude all breaks, including a break in progress. Open entries from previous days are flagged for review.</p>
     </>;
@@ -243,10 +291,27 @@ export default function HRMS(){
     const rows=data.leaves.filter(l=>(isAdmin||l.employee_id===me!.id)&&(statusFilter==='all'||l.status===statusFilter));
     return <>
       {heading(isAdmin?'Leave management':'My leave',isAdmin?'Give your team room to rest and recharge.':'Plan your time away and track your balances.',{label:'Request leave',fn:()=>setModal({kind:'leave'})})}
-      {!isAdmin&&<div className="stats three">{['annual','sick','casual'].map(type=>{const b=balance(me!,type,currentYear,data);return <div key={type} className="stat"><span className="capitalize">{type} leave · {currentYear}</span><strong>{b.remaining}<small> / {b.allowance} days</small></strong><progress max={b.allowance||1} value={b.used+b.pending}/><small>{b.used} used · {b.pending} pending</small></div>;})}</div>}
+      {!isAdmin&&<div className="stats three">
+        <div className="stat">
+          <span>Accrued leaves</span>
+          <strong>{(me!.accrued_leaves || 0).toFixed(2)}<small> / {data.settings.accrual_cap} days</small></strong>
+          <progress max={data.settings.accrual_cap} value={me!.accrued_leaves || 0}/>
+          <small>+{data.settings.accrual_rate} days per month</small>
+        </div>
+        <div className="stat">
+          <span>Pending</span>
+          <strong>{data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='pending').reduce((n,l)=>n+l.days,0).toFixed(2)}<small> days</small></strong>
+          <small>Awaiting approval</small>
+        </div>
+        <div className="stat">
+          <span>Used this year</span>
+          <strong>{data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='approved'&&l.start_date.startsWith(String(currentYear))).reduce((n,l)=>n+l.days,0).toFixed(2)}<small> days</small></strong>
+          <small>Approved</small>
+        </div>
+      </div>}
       <section className="panel">
         <div className="toolbar"><h2>Leave requests</h2>{filterSelect()}</div>
-        <div className="table-scroll"><table><thead><tr>{isAdmin&&<th>EMPLOYEE</th>}<th>LEAVE TYPE</th><th>DATES</th><th>DAYS</th><th>REASON</th><th>STATUS</th><th/></tr></thead><tbody>{rows.map(l=><tr key={l.id}>{isAdmin&&<td>{employeeCell(l.employee_id)}</td>}<td className="capitalize">{l.type}{l.half_day?' · Half day':''}</td><td>{fmt(l.start_date)}{l.end_date!==l.start_date&&<><br/>{fmt(l.end_date)}</>}</td><td>{l.days}</td><td className="reason-cell">{l.reason}{l.review_comment&&<small>Admin: {l.review_comment}</small>}</td><td><Badge>{l.status}</Badge></td><td>{l.status==='pending'&&(isAdmin?<button className="button compact" onClick={()=>setModal({kind:'review',row:{...l,request_kind:'leave'}})}>Review</button>:<button className="text-button" disabled={busy} onClick={()=>action(()=>store.rpc('cancel_leave',{p_id:l.id}),'Leave request cancelled',false)}>Cancel</button>)}</td></tr>)}</tbody></table></div>
+        <div className="table-scroll"><table><thead><tr>{isAdmin&&<th>EMPLOYEE</th>}<th>LEAVE TYPE</th><th>DATES</th><th>DAYS</th><th>REASON</th><th>STATUS</th><th/></tr></thead><tbody>{rows.map(l=><tr key={l.id}>{isAdmin&&<td>{employeeLink(l.employee_id)}</td>}<td className="capitalize">{l.type}{l.half_day?' · Half day':''}</td><td>{fmt(l.start_date)}{l.end_date!==l.start_date&&<><br/>{fmt(l.end_date)}</>}</td><td>{l.days}</td><td className="reason-cell">{l.reason}{l.review_comment&&<small>Admin: {l.review_comment}</small>}</td><td><Badge>{l.status}</Badge></td><td>{l.status==='pending'&&(isAdmin?<button className="button compact" onClick={()=>setModal({kind:'review',row:{...l,request_kind:'leave'}})}>Review</button>:<button className="text-button" disabled={busy} onClick={()=>action(()=>store.rpc('cancel_leave',{p_id:l.id}),'Leave request cancelled',false)}>Cancel</button>)}</td></tr>)}</tbody></table></div>
         {!rows.length&&<Empty title="No leave requests" text="Your leave requests will appear here."/>}
       </section>
       <p className="footnote muted">Weekly off days and holidays are excluded. Pending requests reserve your balance. Submit separate requests for separate calendar years.</p>
@@ -261,8 +326,8 @@ export default function HRMS(){
     return <>
       {heading(adjustOnly?'Attendance adjustments':'Approvals',adjustOnly?'A missed check-in shouldn’t mean a missing workday.':'Review requests and keep your team moving.',adjustOnly?{label:'Request adjustment',fn:()=>setModal({kind:'adjustment'})}:undefined)}
       <div className="toolbar standalone"><span>{adjustOnly?'Your submitted corrections':'Leave and attendance requests'}</span>{filterSelect()}</div>
-      {!adjustOnly&&<section className="panel"><div className="panel-heading"><h2>Leave requests <span className="count">{leaves.length}</span></h2></div>{leaves.map(l=><div className="approval-row" key={l.id}>{employeeCell(l.employee_id)}<div><strong className="capitalize">{l.type} leave · {l.days} day{l.days===1?'':'s'}</strong><small>{fmt(l.start_date)} — {fmt(l.end_date)}</small><p>{l.reason}</p></div><Badge>{l.status}</Badge>{l.status==='pending'&&<button className="button" onClick={()=>setModal({kind:'review',row:{...l,request_kind:'leave'}})}>Review request<ArrowUpRight size={15}/></button>}</div>)}{!leaves.length&&<Empty title="You’re all caught up" text="No leave requests to review."/>}</section>}
-      <section className="panel"><div className="panel-heading"><h2>Attendance requests</h2></div><div className="table-scroll"><table><thead><tr>{isAdmin&&<th>EMPLOYEE</th>}<th>DATE</th><th>REQUESTED TIMES</th><th>REASON</th><th>STATUS</th><th/></tr></thead><tbody>{adjustments.map(r=><tr key={r.id}>{isAdmin&&<td>{employeeCell(r.employee_id)}</td>}<td>{fmt(r.work_date)}</td><td>{timeLabel(r.requested_in,data.settings.timezone)} — {timeLabel(r.requested_out,data.settings.timezone)}</td><td className="reason-cell">{r.reason}{r.review_comment&&<small>Admin: {r.review_comment}</small>}</td><td><Badge>{r.status}</Badge></td><td>{isAdmin&&r.status==='pending'&&<button className="button compact" onClick={()=>setModal({kind:'review',row:{...r,request_kind:'adjustment'}})}>Review</button>}</td></tr>)}</tbody></table></div>{!adjustments.length&&<Empty title="No adjustment requests" text="Missing-entry requests will appear here."/>}</section>
+      {!adjustOnly&&<section className="panel"><div className="panel-heading"><h2>Leave requests <span className="count">{leaves.length}</span></h2></div>{leaves.map(l=><div className="approval-row" key={l.id}>{employeeLink(l.employee_id)}<div><strong className="capitalize">{l.type} leave · {l.days} day{l.days===1?'':'s'}</strong><small>{fmt(l.start_date)} — {fmt(l.end_date)}</small><p>{l.reason}</p></div><Badge>{l.status}</Badge>{l.status==='pending'&&<button className="button" onClick={()=>setModal({kind:'review',row:{...l,request_kind:'leave'}})}>Review request<ArrowUpRight size={15}/></button>}</div>)}{!leaves.length&&<Empty title="You’re all caught up" text="No leave requests to review."/>}</section>}
+      <section className="panel"><div className="panel-heading"><h2>Attendance requests</h2></div><div className="table-scroll"><table><thead><tr>{isAdmin&&<th>EMPLOYEE</th>}<th>DATE</th><th>REQUESTED TIMES</th><th>REASON</th><th>STATUS</th><th/></tr></thead><tbody>{adjustments.map(r=><tr key={r.id}>{isAdmin&&<td>{employeeLink(r.employee_id)}</td>}<td>{fmt(r.work_date)}</td><td>{timeLabel(r.requested_in,data.settings.timezone)} — {timeLabel(r.requested_out,data.settings.timezone)}</td><td className="reason-cell">{r.reason}{r.review_comment&&<small>Admin: {r.review_comment}</small>}</td><td><Badge>{r.status}</Badge></td><td>{isAdmin&&r.status==='pending'&&<button className="button compact" onClick={()=>setModal({kind:'review',row:{...r,request_kind:'adjustment'}})}>Review</button>}</td></tr>)}</tbody></table></div>{!adjustments.length&&<Empty title="No adjustment requests" text="Missing-entry requests will appear here."/>}</section>
     </>;
   }
 
@@ -309,7 +374,7 @@ export default function HRMS(){
       <div className="stats three">{stat('Fully allocated',people.filter(e=>activeAlloc(e.id)>=100).length,'100% assigned today',Network,'purple')}{stat('Partially allocated',people.filter(e=>activeAlloc(e.id)>0&&activeAlloc(e.id)<100).length,'Room for another assignment',Users)}{stat('Available',people.filter(e=>activeAlloc(e.id)===0).length,'No allocation today; check leave before assigning',CheckCheck,'green')}</div>
       <section className="panel">
         <div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search employees…"/><span className="muted">Allocation as of {fmt(today)}</span></div>
-        {people.filter(e=>matches(e.name)).map(e=><div className="allocation-person" key={e.id}><div className="allocation-person-top">{employeeCell(e.id)}<Badge>{attendanceStatus(e.id,today,data)}</Badge><div className="allocation-meter"><progress max={100} value={activeAlloc(e.id)}/><strong>{activeAlloc(e.id)}%</strong></div></div><div className="assignment-list">{data.allocations.filter(a=>a.employee_id===e.id).map(a=><div className="assignment" key={a.id}><span className="assignment-dot"/><div><strong>{project(a.project_id)?.name||'Project'}</strong><small>{a.role} · {fmt(a.start_date)} – {fmt(a.end_date)}</small></div><b>{a.percentage}%</b><button className="icon-button" aria-label={'Edit allocation for '+e.name} onClick={()=>openEdit('allocations',a)}><Pencil size={16}/></button><button className="icon-button" aria-label={'Remove allocation for '+e.name} onClick={()=>setModal({kind:'delete',row:{entity:'allocations',id:a.id,name:'this assignment'}})}><Trash2 size={16}/></button></div>)}{!data.allocations.some(a=>a.employee_id===e.id)&&<p className="muted">No assignments yet</p>}</div></div>)}
+        {people.filter(e=>matches(e.name)).map(e=><div className="allocation-person" key={e.id}><div className="allocation-person-top">{employeeLink(e.id)}<Badge>{attendanceStatus(e.id,today,data)}</Badge><div className="allocation-meter"><progress max={100} value={activeAlloc(e.id)}/><strong>{activeAlloc(e.id)}%</strong></div></div><div className="assignment-list">{data.allocations.filter(a=>a.employee_id===e.id).map(a=><div className="assignment" key={a.id}><span className="assignment-dot"/><div><strong>{project(a.project_id)?.name||'Project'}</strong><small>{a.role} · {fmt(a.start_date)} – {fmt(a.end_date)}</small></div><b>{a.percentage}%</b><button className="icon-button" aria-label={'Edit allocation for '+e.name} onClick={()=>openEdit('allocations',a)}><Pencil size={16}/></button><button className="icon-button" aria-label={'Remove allocation for '+e.name} onClick={()=>setModal({kind:'delete',row:{entity:'allocations',id:a.id,name:'this assignment'}})}><Trash2 size={16}/></button></div>)}{!data.allocations.some(a=>a.employee_id===e.id)&&<p className="muted">No assignments yet</p>}</div></div>)}
       </section>
     </>;
   }
@@ -318,6 +383,24 @@ export default function HRMS(){
     return <>
       {heading('My profile','Keep the details that matter up to date.')}
       <div className="profile-layout">
+        <div className="stats three" style={{marginBottom:'20px'}}>
+          <div className="stat">
+            <div className="stat-top"><span>Accrued leaves</span><span className="stat-icon green">🌴</span></div>
+            <strong>{(me!.accrued_leaves || 0).toFixed(2)}<small> / {data.settings.accrual_cap} days</small></strong>
+            <progress max={data.settings.accrual_cap} value={me!.accrued_leaves || 0}/>
+            <small>+{data.settings.accrual_rate} days per month</small>
+          </div>
+          <div className="stat">
+            <div className="stat-top"><span>Pending requests</span><span className="stat-icon orange">⏳</span></div>
+            <strong>{data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='pending').reduce((n,l)=>n+l.days,0).toFixed(2)}<small> days</small></strong>
+            <small>Awaiting approval</small>
+          </div>
+          <div className="stat">
+            <div className="stat-top"><span>Used this year</span><span className="stat-icon blue">✓</span></div>
+            <strong>{data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='approved'&&l.start_date.startsWith(String(currentYear))).reduce((n,l)=>n+l.days,0).toFixed(2)}<small> days</small></strong>
+            <small>Approved leaves</small>
+          </div>
+        </div>
         <section className="panel profile-card"><Avatar name={me!.name}/><h2>{me!.name}</h2><p>{me!.designation}</p><Badge>{me!.status}</Badge><dl><dt>Employee ID</dt><dd>{me!.employee_code}</dd><dt>Department</dt><dd>{me!.department}</dd><dt>Work email</dt><dd>{me!.email}</dd><dt>Joined</dt><dd>{fmt(me!.joined_on)}</dd><dt>Employment</dt><dd>{me!.employment_type}</dd><dt>Reporting manager</dt><dd>{person(me!.manager_id)?.name||'Not assigned'}</dd></dl></section>
         <section className="panel profile-form"><h2>Personal information</h2><p className="muted">Employment details are managed by your administrator.</p><Form busy={busy} initial={{...me}} fields={[{name:'phone',label:'Phone number',type:'tel'},{name:'address',label:'Address',type:'textarea',wide:true},{name:'emergency_contact',label:'Emergency contact',wide:true,placeholder:'Name, relationship and phone number'}]} onSubmit={v=>action(()=>store.rpc('update_my_profile',{p_phone:v.phone,p_address:v.address,p_emergency_contact:v.emergency_contact}),'Profile updated',false)}/></section>
       </div>
@@ -327,7 +410,8 @@ export default function HRMS(){
   function settings(){
     return <>
       {heading('Workspace settings','Your company’s working rhythm.')}
-      <section className="panel settings-form"><h2>Company & attendance policy</h2><Form busy={busy} initial={{...data.settings,weekend_days:data.settings.weekend_days.join(',')}} fields={[{name:'company_name',label:'Company name',required:true},{name:'timezone',label:'Timezone',required:true,options:opts(['Asia/Karachi','Asia/Dubai','Asia/Kolkata','Europe/London','America/New_York','UTC'])},{name:'work_start',label:'Workday starts',type:'time',required:true},{name:'work_end',label:'Workday ends',type:'time',required:true},{name:'grace_minutes',label:'Late arrival grace (minutes)',type:'number',min:0,max:120,required:true},{name:'weekend_days',label:'Weekly off days',required:true,options:[{value:'0,6',label:'Saturday & Sunday'},{value:'0',label:'Sunday'},{value:'5,6',label:'Friday & Saturday'},{value:'5',label:'Friday'},{value:'none',label:'No weekly off days'}]}]} onSubmit={v=>action(()=>store.rpc('save_settings',{p_settings:{...v,weekend_days:v.weekend_days==='none'?[]:String(v.weekend_days).split(',').map(Number)}}),'Settings saved',false)}/><p className="muted">This version uses one company calendar and same-day shifts. Calendar changes affect attendance labels; submitted leave keeps its recorded day count.</p></section>
+      <section className="panel settings-form"><h2>Company & attendance policy</h2><Form busy={busy} initial={{...data.settings,weekend_days:data.settings.weekend_days.join(',')}} fields={[{name:'company_name',label:'Company name',required:true},{name:'timezone',label:'Timezone',required:true,options:opts(['Asia/Karachi','Asia/Dubai','Asia/Kolkata','Europe/London','America/New_York','UTC'])},{name:'work_start',label:'Workday starts',type:'time',required:true},{name:'work_end',label:'Workday ends',type:'time',required:true},{name:'grace_minutes',label:'Late arrival grace (minutes)',type:'number',min:0,max:120,required:true},{name:'weekend_days',label:'Weekly off days',required:true,options:[{value:'0,6',label:'Saturday & Sunday'},{value:'0',label:'Sunday'},{value:'5,6',label:'Friday & Saturday'},{value:'5',label:'Friday'},{value:'none',label:'No weekly off days'}]},{name:'accrual_rate',label:'Monthly accrual rate (days)',type:'number',min:0,max:10,step:0.25,required:true},
+        {name:'accrual_cap',label:'Maximum accrued leaves (days)',type:'number',min:1,max:100,step:1,required:true},]}  onSubmit={v=>action(()=>store.rpc('save_settings',{p_settings:{...v,weekend_days:v.weekend_days==='none'?[]:String(v.weekend_days).split(',').map(Number)}}),'Settings saved',false)}/><p className="muted">This version uses one company calendar and same-day shifts. Calendar changes affect attendance labels; submitted leave keeps its recorded day count.</p></section>
       <section className="panel"><div className="panel-heading"><div><h2>Audit history</h2><p>Latest 100 recorded actions</p></div></div><div className="table-scroll"><table><thead><tr><th>ACTION</th><th>BY</th><th>RECORD</th><th>WHEN</th></tr></thead><tbody>{data.audit.slice(0,100).map(a=><tr key={a.id}><td>{a.action.replaceAll('_',' ')}</td><td>{person(a.actor_id)?.name||'System'}</td><td>{a.entity.replaceAll('_',' ')}</td><td>{new Date(a.created_at).toLocaleString('en-GB',{timeZone:data.settings.timezone})}</td></tr>)}</tbody></table></div>{!data.audit.length&&<Empty title="A clean slate" text="Changes and approvals will be recorded here."/>}</section>
     </>;
   }
@@ -348,10 +432,7 @@ export default function HRMS(){
             employment_type:'Full-time',
             status:'active',
             role:'employee',
-            annual_allowance:20,
-            sick_allowance:10,
-            casual_allowance:7,
-            daily_hours:9,
+            daily_hours:null,
             monthly_days:null
           };
           fields=[
@@ -365,13 +446,10 @@ export default function HRMS(){
             {name:'joined_on',label:'Joining date',type:'date',required:true},
             {name:'salary',label:'Monthly salary (PKR)',type:'number',min:0,max:9999999999.99,step:0.01,placeholder:'e.g. 100000'},
             {name:'employment_type',label:'Employment type',required:true,options:opts(['Full-time','Part-time','Contract','Intern'])},
-            {name:'daily_hours',label:'Daily hours',type:'number',min:1,max:24,step:0.5,required:true,placeholder:'e.g. 9 full-time, 4 intern'},
+            {name:'daily_hours',label:'Daily hours (leave empty for Full-time)',type:'number',min:1,max:24,step:0.5,required:false,placeholder:'e.g. 4 intern, 6 part-time, 8 contract'},
             {name:'monthly_days',label:'Monthly working days (optional)',type:'number',min:1,max:31,placeholder:'Leave empty for all working days'},
             {name:'status',label:'Status',required:true,options:opts(['active','inactive'])},
             {name:'role',label:'Portal access',required:true,options:opts(['employee','admin'])},
-            {name:'annual_allowance',label:'Annual leave / year',type:'number',min:0,max:366,required:true},
-            {name:'sick_allowance',label:'Sick leave / year',type:'number',min:0,max:366,required:true},
-            {name:'casual_allowance',label:'Casual leave / year',type:'number',min:0,max:366,required:true},
             {name:'address',label:'Address',type:'textarea',wide:true},
             {name:'emergency_contact',label:'Emergency contact',wide:true}
           ];
@@ -389,15 +467,17 @@ export default function HRMS(){
   
   // ✅ Employment type ke hisaab se daily_hours auto-set
   if(kind === 'employees' && 'employment_type' in v){
-    const typeHours: Record<string, number> = {
-      'Full-time': 9,
-      'Part-time': 6,
-      'Contract': 8,
-      'Intern': 4,
-    };
-    // Sirf tab auto-set karo jab daily_hours khali ho
-    if(!v.daily_hours) v.daily_hours = typeHours[String(v.employment_type)] || 9;
-  }
+      if(v.employment_type === 'Full-time'){
+        v.daily_hours = null;   // ← Full-time ka null
+      } else if(!v.daily_hours){
+        const typeHours: Record<string, number> = {
+          'Part-time': 6,
+          'Contract': 8,
+          'Intern': 4,
+        };
+        v.daily_hours = typeHours[String(v.employment_type)] || 8;
+      }
+    }
   
   if('monthly_days'in v && (v.monthly_days === '' || v.monthly_days === undefined)){
     v.monthly_days = null;
@@ -409,11 +489,18 @@ export default function HRMS(){
   action(()=>store.save(kind as Entity,v),'Record saved');
 }}/>{kind==='employees'&&<p className="form-hint">The employee must sign in with this exact Google email. Annual allowances reset by calendar year.</p>}{kind==='allocations'&&<p className="form-hint">Assignments cannot exceed 100% across overlapping dates. Review the employee’s leave and off days before assigning work.</p>}</Modal>;
     }
-    if(kind==='leave')return <Modal title="Request leave" onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<p className="modal-intro">Requesting leave for {me!.name}. Off days are excluded automatically.</p><Form busy={busy} label="Submit request" initial={{start_date:today,end_date:today,type:'annual'}} fields={[{name:'type',label:'Leave type',required:true,options:opts(['annual','sick','casual','unpaid'])},{name:'half_day',label:'Half-day leave',type:'checkbox'},{name:'start_date',label:'Start date',type:'date',required:true},{name:'end_date',label:'End date',type:'date',required:true},{name:'reason',label:'Reason',type:'textarea',required:true,wide:true}]} onSubmit={v=>action(()=>store.rpc('request_leave',{p_type:v.type,p_start:v.start_date,p_end:v.end_date,p_half_day:v.half_day,p_reason:v.reason}),'Leave request submitted')}/></Modal>;
+    if(kind==='leave')return <Modal title="Request leave" onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<p className="modal-intro">Requesting leave for {me!.name}. Available: <strong>{(me!.accrued_leaves||0).toFixed(2)} days</strong>.</p><Form busy={busy} label="Submit request" initial={{start_date:today,end_date:today}} fields={[{name:'half_day',label:'Half-day leave',type:'checkbox'},{name:'start_date',label:'Start date',type:'date',required:true},{name:'end_date',label:'End date',type:'date',required:true},{name:'reason',label:'Reason',type:'textarea',required:true,wide:true}]} onSubmit={v=>action(()=>store.rpc('request_accrued_leave',{p_start:v.start_date,p_end:v.end_date,p_half_day:v.half_day,p_reason:v.reason}),'Leave request submitted')}/></Modal>;
     if(kind==='adjustment')return <Modal title="Request attendance adjustment" onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<p className="modal-intro">Enter the correct times in {data.settings.timezone}. An admin will review your request.</p><Form busy={busy} label="Submit adjustment" initial={{date:row.date||today,check_in:'09:00',check_out:'18:00'}} fields={[{name:'date',label:'Attendance date',type:'date',max:today,required:true,wide:true},{name:'check_in',label:'Correct check-in',type:'time',required:true},{name:'check_out',label:'Correct check-out',type:'time'},{name:'reason',label:'Reason for the correction',type:'textarea',required:true,wide:true}]} onSubmit={v=>{const date=String(v.date);action(()=>store.rpc('request_adjustment',{p_date:date,p_in:localToISO(date,String(v.check_in),data.settings.timezone),p_out:v.check_out?localToISO(date,String(v.check_out),data.settings.timezone):null,p_reason:v.reason}),'Adjustment submitted for approval');}}/></Modal>;
-    if(kind==='review'){const original=data.attendance.find(a=>a.employee_id===row.employee_id&&a.work_date===row.work_date);return <Modal title="Review request" onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<div className="review-summary">{employeeCell(String(row.employee_id))}<p>{String(row.reason)}</p>{row.request_kind==='leave'?<p><strong className="capitalize">{String(row.type)}</strong> · {String(row.days)} day(s)<br/>{fmt(String(row.start_date))} — {fmt(String(row.end_date))}</p>:<><p><strong>{fmt(String(row.work_date))}</strong></p><p>Original: {timeLabel(original?.check_in||null,data.settings.timezone)} — {timeLabel(original?.check_out||null,data.settings.timezone)}</p><p>Requested: {timeLabel(String(row.requested_in),data.settings.timezone)} — {timeLabel(row.requested_out as string|null,data.settings.timezone)}</p></>}</div><Form busy={busy} label="Confirm decision" initial={{status:'approved'}} fields={[{name:'status',label:'Decision',required:true,options:opts(['approved','rejected']),wide:true},{name:'comment',label:'Review comment',type:'textarea',wide:true}]} onSubmit={v=>action(()=>store.rpc('review_request',{p_kind:row.request_kind,p_id:row.id,p_status:v.status,p_comment:v.comment}),'Decision recorded')}/></Modal>;}
+    if(kind==='review'){const original=data.attendance.find(a=>a.employee_id===row.employee_id&&a.work_date===row.work_date);return <Modal title="Review request" onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<div className="review-summary">{employeeLink(String(row.employee_id))}<p>{String(row.reason)}</p>{row.request_kind==='leave'?<p><strong className="capitalize">{String(row.type)}</strong> · {String(row.days)} day(s)<br/>{fmt(String(row.start_date))} — {fmt(String(row.end_date))}</p>:<><p><strong>{fmt(String(row.work_date))}</strong></p><p>Original: {timeLabel(original?.check_in||null,data.settings.timezone)} — {timeLabel(original?.check_out||null,data.settings.timezone)}</p><p>Requested: {timeLabel(String(row.requested_in),data.settings.timezone)} — {timeLabel(row.requested_out as string|null,data.settings.timezone)}</p></>}</div><Form busy={busy} label="Confirm decision" initial={{status:'approved'}} fields={[{name:'status',label:'Decision',required:true,options:opts(['approved','rejected']),wide:true},{name:'comment',label:'Review comment',type:'textarea',wide:true}]} onSubmit={v=>{
+  const isLeave = row.request_kind === 'leave';
+  const rpcName = isLeave ? 'review_accrued_leave' : 'review_request';
+  const args = isLeave 
+    ? {p_id:row.id, p_status:v.status, p_comment:v.comment}
+    : {p_kind:row.request_kind, p_id:row.id, p_status:v.status, p_comment:v.comment};
+  return action(()=>store.rpc(rpcName, args),'Decision recorded');
+}}/></Modal>;}
     if(kind==='delete')return <Modal title="Remove record?" onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<p className="modal-intro">Remove {String(row.name)}? This action cannot be undone.</p><div className="form-footer"><button className="button" onClick={()=>setModal(null)}>Keep record</button><button className="button danger" disabled={busy} onClick={()=>action(()=>store.remove(row.entity as Entity,String(row.id)),'Record removed')}>Remove</button></div></Modal>;
-    if(kind==='day'){const d=String(row.date);const id=String(row.employee_id);const a=data.attendance.find(a=>a.employee_id===id&&a.work_date===d);return <Modal title={fmt(d)} onClose={()=>setModal(null)}><div className="review-summary">{employeeCell(id)}<p><Badge>{attendanceStatus(id,d,data)}</Badge></p><p>{offDay(d,data)}</p><p>Check in: <strong>{timeLabel(a?.check_in||null,data.settings.timezone)}</strong></p><p>Check out: <strong>{timeLabel(a?.check_out||null,data.settings.timezone)}</strong></p><p>Actual working hours: <strong>{durationLabel(workTotals(a,data.breaks,now).workedMs)}</strong></p><p>Break time: <strong>{durationLabel(workTotals(a,data.breaks,now).breakMs)}</strong></p><BreakHistory data={data} attendance={a} now={now}/></div>{id===me!.id&&d<=today&&<div className="form-footer"><button className="button primary" onClick={()=>setModal({kind:'adjustment',row:{date:d}})}>Request adjustment<ArrowUpRight size={16}/></button></div>}</Modal>;}
+    if(kind==='day'){const d=String(row.date);const id=String(row.employee_id);const a=data.attendance.find(a=>a.employee_id===id&&a.work_date===d);return <Modal title={fmt(d)} onClose={()=>setModal(null)}><div className="review-summary">{employeeLink(id)}<p><Badge>{attendanceStatus(id,d,data)}</Badge></p><p>{offDay(d,data)}</p><p>Check in: <strong>{timeLabel(a?.check_in||null,data.settings.timezone)}</strong></p><p>Check out: <strong>{timeLabel(a?.check_out||null,data.settings.timezone)}</strong></p><p>Actual working hours: <strong>{durationLabel(workTotals(a,data.breaks,now).workedMs)}</strong></p><p>Break time: <strong>{durationLabel(workTotals(a,data.breaks,now).breakMs)}</strong></p><BreakHistory data={data} attendance={a} now={now}/></div>{id===me!.id&&d<=today&&<div className="form-footer"><button className="button primary" onClick={()=>setModal({kind:'adjustment',row:{date:d}})}>Request adjustment<ArrowUpRight size={16}/></button></div>}</Modal>;}
     return null;
   }
 

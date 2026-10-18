@@ -3,7 +3,22 @@ import {dayKey, offDay, attendanceStatus} from './domain';
 import {workTotals} from './breaks';
 
 export function monthlyAttendance(employee: Employee, month: string, data: Data, now: number) {
-  const dailyHours = employee.daily_hours ?? 9;
+  const dailyHours = (() => {
+      // Full-time → settings se
+      if (employee.employment_type === 'Full-time') {
+        const [startH, startM] = (data.settings.work_start || '09:00').split(':').map(Number);
+        const [endH, endM] = (data.settings.work_end || '18:00').split(':').map(Number);
+        return Math.max(1, (endH * 60 + endM - startH * 60 - startM) / 60);
+      }
+      
+      // Baaki → employee ka manual, ya employment type ka default
+      const defaultHours: Record<string, number> = {
+        'Part-time': 6,
+        'Contract': 8,
+        'Intern': 4,
+      };
+      return employee.daily_hours ?? defaultHours[employee.employment_type] ?? 8;
+    })();
   const monthlyDays = employee.monthly_days;   // null = sab working days
   
   const year = Number(month.slice(0, 4));

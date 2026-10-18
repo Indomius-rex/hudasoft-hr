@@ -3,7 +3,7 @@ import {useState,useEffect,useCallback,useRef} from 'react';
 import {Data,Entity,emptyData,Employee,Leave,Adjustment} from './types';
 import {supabase,demoEnabled} from './supabase';
 import {makeDemo} from './demo';
-import {dayKey,leaveDays,balance,allocationPeak} from './domain';
+import {dayKey,leaveDays,allocationPeak} from './domain';
 import {assertBreakTransition,assertBreaksFit} from './breaks';
 const normalizeDemo=(d:Data):Data=>({...d,breaks:d.breaks||[],employees:d.employees.map(e=>({...e,salary:e.salary??null}))});
 const TABLES={breaks:'attendance_breaks',employees:'employees',attendance:'attendance',leaves:'leave_requests',adjustments:'attendance_adjustments',holidays:'holidays',customers:'customers',projects:'projects',allocations:'allocations',audit:'audit_log'} as const;
