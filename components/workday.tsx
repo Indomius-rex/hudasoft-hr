@@ -4,6 +4,15 @@ import {Data,Employee,Attendance} from '@/lib/types';
 import {dayKey,offDay,timeLabel} from '@/lib/domain';
 import {workTotals,durationLabel} from '@/lib/breaks';
 import {Badge} from './ui';
+async function getClientIP(): Promise<string | null> {
+  try {
+    const res = await fetch('https://api.ipify.org?format=json');
+    const data = await res.json();
+    return data.ip;
+  } catch {
+    return null;
+  }
+}
 type Props={data:Data;employee:Employee;now:number;busy:boolean;onAction:(name:string,args:Record<string,unknown>,message:string)=>void};
 export function BreakHistory({data,attendance,now}:{data:Data;attendance:Attendance|undefined;now:number}){
  const rows=data.breaks.filter(b=>b.attendance_id===attendance?.id).sort((a,b)=>a.started_at.localeCompare(b.started_at));
@@ -18,7 +27,21 @@ export default function Workday({data,employee,now,busy,onAction}:Props){
  const totals=workTotals(attendance,data.breaks,now);
  return <section className="panel clock-panel"><div className="panel-heading"><div><h2>Your workday</h2><p>{previousDay?`Open break from ${attendance.work_date}`:offDay(today,data)||'Ready when you are'}</p></div>{active?<Badge>On break</Badge>:<Timer size={24}/>}</div><div className="clock-times"><div><small>CHECK IN</small><strong>{timeLabel(attendance?.check_in||null,data.settings.timezone)}</strong></div><ArrowRight size={24}/><div><small>CHECK OUT</small><strong>{timeLabel(attendance?.check_out||null,data.settings.timezone)}</strong></div></div><div className="workday-totals"><div><span>{attendance?.check_out?'Actual hours worked':'Worked so far'}</span><strong>{durationLabel(totals.workedMs)}</strong><small>{active?'Paused while you’re on break':'All break time excluded'}</small></div><div><span>Total break time</span><strong>{durationLabel(totals.breakMs)}</strong><small>{active?'Current break included':'Across all breaks'}</small></div></div><div className="workday-actions">
    <div style={{display:'flex',gap:'10px',flexWrap:'wrap'}}>
-  <button className="button primary" disabled={busy||!!active||!!todayRecord?.check_out} onClick={()=>onAction('clock_attendance',{p_action:todayRecord?.check_in?'out':'in'},todayRecord?.check_in?'You’re checked out. Have a good evening!':'You’re checked in. Have a great day!')}><Clock3 size={18}/>{todayRecord?.check_out?'Workday complete':todayRecord?.check_in?'Check out':'Check in'}</button>
+  <button 
+  className="button primary" 
+  disabled={busy||!!active||!!todayRecord?.check_out} 
+  onClick={async()=>{
+    const ip = await getClientIP();
+    onAction(
+      'clock_attendance',
+      {p_action:todayRecord?.check_in?'out':'in', p_ip: ip},
+      todayRecord?.check_in?'You’re checked out. Have a good evening!':'You’re checked in. Have a great day!'
+    );
+  }}
+>
+  <Clock3 size={18}/>
+  {todayRecord?.check_out?'Workday complete':todayRecord?.check_in?'Check out':'Check in'}
+</button>
   {todayRecord?.check_out&&(
     <button className="button" disabled={busy} onClick={()=>onAction('reopen_workday',{},'Workday reopened. You can continue working.')}>
       <Play size={18}/>

@@ -19,12 +19,102 @@ export function useHRMS(){
  async function signOut(){if(demo){const saved=localStorage.getItem('Hudasoft-demo-data-v1');const latest=saved?normalizeDemo(JSON.parse(saved) as Data):data;if(latest.breaks.some(b=>b.employee_id===me?.id&&!b.ended_at))throw new Error('End your active break before signing out.');}if(supabase&&!demo){const check=await supabase.rpc('assert_can_sign_out');if(check.error)throw check.error;const {error}=await supabase.auth.signOut();if(error)throw error;}sessionStorage.removeItem('Hudasoft-demo');setMe(null);setDemo(false);setError('');}
  async function save(entity:Entity,payload:Record<string,unknown>){await run(async()=>{if(me?.role!=='admin')throw new Error('Administrator access required.');if(entity==='employees'&&payload.salary!=null&&(!Number.isFinite(Number(payload.salary))||Number(payload.salary)<0||Number(payload.salary)>9999999999.99))throw new Error('Enter a salary between 0 and 9,999,999,999.99.');const next=structuredClone(data);const id=payload.id as string|undefined;const row:Record<string,unknown>&{id:string}={...payload,id:id||crypto.randomUUID()};if(entity==='allocations'){if(String(row.start_date)>String(row.end_date))throw new Error('End date must follow start date.');if(allocationPeak(String(row.employee_id),String(row.start_date),String(row.end_date),Number(row.percentage),data,id)>100)throw new Error('This assignment exceeds 100% allocation for overlapping dates.');}if(demo){const list=next[entity] as unknown as Record<string,unknown>[];const index=list.findIndex(r=>r.id===row.id);if(index>=0)list[index]={...list[index],...row};else list.push(row);next.audit.unshift({id:crypto.randomUUID(),actor_id:me.id,action:id?'updated':'created',entity,record_id:row.id,created_at:new Date().toISOString(),details:row});commit(next);}else{const {id:ignoredId,...values}=payload;const result=id?await supabase!.from(entity).update(values).eq('id',id):await supabase!.from(entity).insert(values);if(result.error)throw result.error;await load();}});}
  async function remove(entity:Entity,id:string){await run(async()=>{if(me?.role!=='admin')throw new Error('Administrator access required.');if(demo){const next=structuredClone(data);(next[entity] as unknown[])=(next[entity] as {id:string}[]).filter(r=>r.id!==id);commit(next);}else{const {error}=await supabase!.from(entity).delete().eq('id',id);if(error)throw error;await load();}});}
- async function rpc(name:string,args:Record<string,unknown>={}){await run(async()=>{if(!me)throw new Error('Sign in first.');if(!demo){const {error}=await supabase!.rpc(name,args);if(error)throw error;await load();return;}const saved=localStorage.getItem('Hudasoft-demo-data-v1');const next=saved?normalizeDemo(JSON.parse(saved) as Data):structuredClone(data);const now=new Date().toISOString();const today=dayKey(now,data.settings.timezone);if(name==='clock_attendance'){const a=next.attendance.find(a=>a.employee_id===me.id&&a.work_date===today);if(args.p_action==='in'){if(next.breaks.some(b=>b.employee_id===me.id&&!b.ended_at))throw new Error('End your active break before starting a new workday.');if(a?.check_in)throw new Error('You have already checked in today.');next.attendance.push({id:crypto.randomUUID(),employee_id:me.id,work_date:today,check_in:now,check_out:null});}else{if(!a?.check_in||a.check_out)throw new Error('No open check-in for today.');assertBreaksFit({...a,check_out:now},next.breaks);a.check_out=now;}}
+ async function rpc(name:string,args:Record<string,unknown>={}){await run(async()=>{if(!me)throw new Error('Sign in first.');if(!demo){const {error}=await supabase!.rpc(name,args);if(error)throw error;await load();return;}const saved=localStorage.getItem('Hudasoft-demo-data-v1');const next=saved?normalizeDemo(JSON.parse(saved) as Data):structuredClone(data);const now=new Date().toISOString();const today=dayKey(now,data.settings.timezone);
+ if(name==='clock_attendance'){
+  const officeIps = next.settings.office_ips || [];
+  if (officeIps.length > 0) {
+    const p_ip = args.p_ip as string | null; 
+    if (!p_ip || !officeIps.includes(p_ip)) {
+      throw new Error(`You must be connected to office WiFi to clock in/out. Your IP: ${p_ip || 'unknown'}`);
+    }
+  }
+  
+  const a = next.attendance.find(a=>a.employee_id===me.id && a.work_date===today);
+  if(args.p_action==='in'){
+    if(next.breaks.some(b=>b.employee_id===me.id&&!b.ended_at)) throw new Error('End your active break before starting a new workday.');
+    if(a?.check_in) throw new Error('You have already checked in today.');
+    next.attendance.push({id:crypto.randomUUID(),employee_id:me.id,work_date:today,check_in:now,check_out:null});
+  } else {
+    if(!a?.check_in||a.check_out) throw new Error('No open check-in for today.');
+    assertBreaksFit({...a,check_out:now},next.breaks);
+    a.check_out=now;
+  }
+}
  if(name==='manage_break'){const active=next.breaks.find(b=>b.employee_id===me.id&&!b.ended_at);const a=args.p_action==='end'&&active?next.attendance.find(a=>a.id===active.attendance_id):next.attendance.find(a=>a.employee_id===me.id&&a.work_date===today);if(args.p_action==='start'&&active)throw new Error('You are already on a break. End it before starting another.');const b=assertBreakTransition(String(args.p_action),a,next.breaks);if(args.p_action==='start')next.breaks.push({id:crypto.randomUUID(),attendance_id:a!.id,employee_id:me.id,started_at:now,ended_at:null});else b!.ended_at=now;}
  if(name==='update_my_profile'){Object.assign(next.employees.find(e=>e.id===me.id)!,{phone:args.p_phone,address:args.p_address,emergency_contact:args.p_emergency_contact});}
- if(name==='request_leave'){const start=String(args.p_start),end=String(args.p_end),type=String(args.p_type),half=Boolean(args.p_half_day);if(start>end||start.slice(0,4)!==end.slice(0,4)||half&&start!==end)throw new Error('Choose valid dates within one calendar year. Half-days must use one date.');const days=leaveDays(start,end,half,next);if(days<=0)throw new Error('The selected dates contain no working days.');if(next.leaves.some(l=>l.employee_id===me.id&&l.status!=='rejected'&&l.status!=='cancelled'&&l.start_date<=end&&l.end_date>=start))throw new Error('You already have a leave request for these dates.');if(type!=='unpaid'&&balance(me,type,Number(start.slice(0,4)),next).remaining<days)throw new Error('Insufficient available leave balance.');next.leaves.unshift({id:crypto.randomUUID(),employee_id:me.id,type,start_date:start,end_date:end,half_day:half,days,reason:String(args.p_reason),status:'pending',review_comment:'',created_at:now});}
+ if(name==='request_leave'){
+  const start=String(args.p_start), end=String(args.p_end), half=Boolean(args.p_half_day);
+  if(start>end || start.slice(0,4)!==end.slice(0,4) || (half && start!==end)) throw new Error('Choose valid dates within one calendar year. Half-days must use one date.');
+  const days=leaveDays(start,end,half,next);
+  if(days<=0) throw new Error('The selected dates contain no working days.');
+  
+  if(next.leaves.some(l=>l.employee_id===me.id&&l.status!=='rejected'&&l.status!=='cancelled'&&l.start_date<=end&&l.end_date>=start)) throw new Error('You already have a leave request for these dates.');
+  
+  const employee = next.employees.find(e=>e.id===me.id)!;
+  const dailyHours = employee.daily_hours || (() => {
+    const [sH,sM]=(next.settings.work_start||'09:00').split(':').map(Number);
+    const [eH,eM]=(next.settings.work_end||'18:00').split(':').map(Number);
+    return (eH*60+eM-sH*60-sM)/60;
+  })();
+  
+  const requestedHours = days * dailyHours;
+  const pendingHours = next.leaves.filter(l=>l.employee_id===me.id && l.status==='pending').reduce((sum,l)=>sum + (l.days * dailyHours), 0);
+  
+  if ((requestedHours + pendingHours) > (employee.accrued_leaves || 0)) {
+    throw new Error(`Insufficient accrued leaves. Available: ${(employee.accrued_leaves - pendingHours).toFixed(1)} hours.`);
+  }
+
+  next.leaves.unshift({
+    id:crypto.randomUUID(), employee_id:me.id, type:'accrued', start_date:start, end_date:end, half_day:half, days, reason:String(args.p_reason), status:'pending', review_comment:'', created_at:now
+  });
+}
  if(name==='request_adjustment'){const date=String(args.p_date);if(date>today)throw new Error('Future attendance cannot be adjusted.');if(next.adjustments.some(r=>r.employee_id===me.id&&r.work_date===date&&r.status==='pending'))throw new Error('An adjustment is already pending for this date.');const ri=String(args.p_in),ro=args.p_out?String(args.p_out):null;if(ro&&ro<=ri)throw new Error('Check-out must follow check-in.');if(ri>now||ro&&ro>now)throw new Error('Attendance times cannot be in the future.');next.adjustments.unshift({id:crypto.randomUUID(),employee_id:me.id,work_date:date,requested_in:ri,requested_out:ro,reason:String(args.p_reason),status:'pending',review_comment:'',created_at:now});}
- if(name==='review_request'){if(me.role!=='admin')throw new Error('Administrator access required.');const list=args.p_kind==='leave'?next.leaves:next.adjustments;const request=list.find(r=>r.id===args.p_id);if(!request||request.status!=='pending')throw new Error('This request is no longer pending.');request.status=String(args.p_status);request.review_comment=String(args.p_comment||'');if(args.p_kind==='adjustment'&&args.p_status==='approved'){const r=request as Adjustment;const existing=next.attendance.find(a=>a.employee_id===r.employee_id&&a.work_date===r.work_date);if(existing){assertBreaksFit({...existing,check_in:r.requested_in,check_out:r.requested_out},next.breaks);existing.check_in=r.requested_in;existing.check_out=r.requested_out;}else next.attendance.push({id:crypto.randomUUID(),employee_id:r.employee_id,work_date:r.work_date,check_in:r.requested_in,check_out:r.requested_out});}}
+ if(name==='review_request'){
+  if(me.role!=='admin') throw new Error('Administrator access required.');
+  const list = args.p_kind==='leave' ? next.leaves : next.adjustments;
+  const request = list.find(r=>r.id===args.p_id);
+  if(!request || request.status!=='pending') throw new Error('This request is no longer pending.');
+  
+  request.status = String(args.p_status);
+  request.review_comment = String(args.p_comment||'');
+
+  // ✅ AGAR LEAVE APPROVE HUI TO ACCRUED LEAVES MINUS KARO
+  if(args.p_kind==='leave' && args.p_status==='approved'){
+    const l = request as Leave;
+    const emp = next.employees.find(e=>e.id===l.employee_id);
+    if(emp) {
+      const dailyHours = emp.daily_hours || (() => {
+        const [sH,sM]=(next.settings.work_start||'09:00').split(':').map(Number);
+        const [eH,eM]=(next.settings.work_end||'18:00').split(':').map(Number);
+        return (eH*60+eM-sH*60-sM)/60;
+      })();
+      const hoursToDeduct = l.days * dailyHours;
+      emp.accrued_leaves = Math.max(0, emp.accrued_leaves - hoursToDeduct);
+    }
+  }
+
+  // ✅ AGAR ADJUSTMENT APPROVE HUI TO AUTO BREAK-IN KARO
+  if(args.p_kind==='adjustment' && args.p_status==='approved'){
+    const r = request as Adjustment;
+    const existing = next.attendance.find(a=>a.employee_id===r.employee_id && a.work_date===r.work_date);
+    
+    if(existing){
+      assertBreaksFit({...existing, check_in:r.requested_in, check_out:r.requested_out}, next.breaks);
+      existing.check_in = r.requested_in;
+      existing.check_out = r.requested_out;
+      
+      // Auto Break-In
+      const activeBreak = next.breaks.find(b => b.attendance_id === existing.id && !b.ended_at);
+      if (activeBreak && r.requested_out) {
+        activeBreak.ended_at = r.requested_out;
+      }
+    } else {
+      next.attendance.push({
+        id:crypto.randomUUID(), employee_id:r.employee_id, work_date:r.work_date, check_in:r.requested_in, check_out:r.requested_out
+      });
+    }
+  }
+}
  if(name==='cancel_leave'){const r=next.leaves.find(l=>l.id===args.p_id&&l.employee_id===me.id&&l.status==='pending');if(!r)throw new Error('Only your pending requests can be cancelled.');r.status='cancelled';}
  if(name==='save_settings'){if(me.role!=='admin')throw new Error('Administrator access required.');next.settings={...next.settings,...args.p_settings as Data['settings']};}
  next.audit.unshift({id:crypto.randomUUID(),actor_id:me.id,action:name,entity:name,record_id:String(args.p_id||me.id),created_at:now,details:args});commit(next);});}
