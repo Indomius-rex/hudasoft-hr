@@ -12,9 +12,10 @@ import {Employee,Entity,Project,Leave,Adjustment} from '@/lib/types';
 import {dayKey,addDays,dateRange,attendanceStatus,offDay,timeLabel,hours,localToISO} from '@/lib/domain';
 import {supabase,demoEnabled} from '@/lib/supabase';
 import {Avatar,Badge,Empty,SearchBox,Modal,Form,Field} from './ui';
+import { calculateSalary } from '@/lib/salary';
 
 
-const adminNav=[['overview','Overview',LayoutDashboard],['employees','Employees',Users],['attendance','Attendance',Clock3],['leaves','Leave management',CalendarDays],['off-days','Off-day calendar',CalendarOff],['allocations','Team allocation',Network],['approvals','Approvals',ClipboardCheck],['settings','Settings',Settings]] as const;
+const adminNav=[['overview','Overview',LayoutDashboard],['employees','Employees',Users],['attendance','Attendance',Clock3],['leaves','Leave management',CalendarDays],['off-days','Off-day calendar',CalendarOff],['allocations','Team allocation',Network],['approvals','Approvals',ClipboardCheck],['settings','Settings',Settings],['salaries', 'Salaries', BriefcaseBusiness] ] as const;
 const employeeNav=[['overview','Overview',LayoutDashboard],['attendance','My attendance',Clock3],['leaves','My leave',CalendarDays],['adjustments','Attendance adjustments',FileClock],['profile','My profile',UserRound]] as const;
 const opts=(values:string[])=>values.map(value=>({value,label:value.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase())}));
 const fmt=(date:string)=>new Date(date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
@@ -380,10 +381,36 @@ export default function HRMS(){
   }
 
   function profile(){
-    return <>
-      {heading('My profile','Keep the details that matter up to date.')}
-      <div className="profile-layout">
-        <div className="stats three" style={{marginBottom:'20px'}}>
+  // Employee ki salary calculate karo current month ke liye
+  const sal = calculateSalary(me!, month, data, now);
+
+  return <>
+    {heading('My profile','Keep the details that matter up to date.')}
+    
+    <div className="profile-layout">
+      
+      {/* ================= LEFT COLUMN ================= */}
+      <div style={{display:'flex', flexDirection:'column', gap:'20px'}}>
+        
+        {/* 1. Profile Info Card */}
+        <section className="panel profile-card" style={{padding:'30px 20px'}}>
+          <Avatar name={me!.name}/>
+          <h2>{me!.name}</h2>
+          <p>{me!.designation}</p>
+          <Badge>{me!.status}</Badge>
+          
+          <dl style={{marginTop:'25px'}}>
+            <dt>Employee ID</dt><dd>{me!.employee_code}</dd>
+            <dt>Department</dt><dd>{me!.department}</dd>
+            <dt>Work email</dt><dd style={{wordBreak:'break-all'}}>{me!.email}</dd>
+            <dt>Joined</dt><dd>{fmt(me!.joined_on)}</dd>
+            <dt>Employment</dt><dd>{me!.employment_type}</dd>
+            <dt>Reporting manager</dt><dd>{person(me!.manager_id)?.name||'Not assigned'}</dd>
+          </dl>
+        </section>
+
+        {/* 2. Stats Cards (Stacked) */}
+        <div style={{display:'grid', gridTemplateColumns:'1fr', gap:'15px'}}>
           <div className="stat">
             <div className="stat-top"><span>Accrued leaves</span><span className="stat-icon green">🌴</span></div>
             <strong>{(me!.accrued_leaves || 0).toFixed(2)}<small> / {data.settings.accrual_cap} days</small></strong>
@@ -395,22 +422,74 @@ export default function HRMS(){
             <strong>{data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='pending').reduce((n,l)=>n+l.days,0).toFixed(2)}<small> days</small></strong>
             <small>Awaiting approval</small>
           </div>
-          <div className="stat">
-            <div className="stat-top"><span>Used this year</span><span className="stat-icon blue">✓</span></div>
-            <strong>{data.leaves.filter(l=>l.employee_id===me!.id&&l.status==='approved'&&l.start_date.startsWith(String(currentYear))).reduce((n,l)=>n+l.days,0).toFixed(2)}<small> days</small></strong>
-            <small>Approved leaves</small>
-          </div>
         </div>
-        <section className="panel profile-card"><Avatar name={me!.name}/><h2>{me!.name}</h2><p>{me!.designation}</p><Badge>{me!.status}</Badge><dl><dt>Employee ID</dt><dd>{me!.employee_code}</dd><dt>Department</dt><dd>{me!.department}</dd><dt>Work email</dt><dd>{me!.email}</dd><dt>Joined</dt><dd>{fmt(me!.joined_on)}</dd><dt>Employment</dt><dd>{me!.employment_type}</dd><dt>Reporting manager</dt><dd>{person(me!.manager_id)?.name||'Not assigned'}</dd></dl></section>
-        <section className="panel profile-form"><h2>Personal information</h2><p className="muted">Employment details are managed by your administrator.</p><Form busy={busy} initial={{...me}} fields={[{name:'phone',label:'Phone number',type:'tel'},{name:'address',label:'Address',type:'textarea',wide:true},{name:'emergency_contact',label:'Emergency contact',wide:true,placeholder:'Name, relationship and phone number'}]} onSubmit={v=>action(()=>store.rpc('update_my_profile',{p_phone:v.phone,p_address:v.address,p_emergency_contact:v.emergency_contact}),'Profile updated',false)}/></section>
       </div>
-    </>;
-  }
 
+      {/* ================= RIGHT COLUMN ================= */}
+      <div style={{display:'flex', flexDirection:'column', gap:'20px'}}>
+        
+        {/* 1. Salary Card */}
+        <section className="panel" style={{padding:'25px'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px', flexWrap:'wrap', gap:'10px'}}>
+            <h2 style={{margin:0}}>My Salary</h2>
+            <input 
+              type="month" 
+              value={month} 
+              onChange={e=>setMonth(e.target.value)} 
+              style={{maxWidth:'160px', minHeight:'36px', padding:'4px 10px', fontSize:'13px'}}
+            />
+          </div>
+          
+          <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'15px', background:'#f8faff', padding:'15px', borderRadius:'8px', border:'1px solid #e9edf3'}}>
+            <div>
+              <small style={{color:'#788293', display:'block', marginBottom:'5px'}}>Basic Salary</small>
+              <strong style={{fontSize:'18px'}}>{sal.basic.toLocaleString()} PKR</strong>
+            </div>
+            <div>
+              <small style={{color:'#788293', display:'block', marginBottom:'5px'}}>House Rent</small>
+              <strong style={{fontSize:'18px'}}>{sal.hra.toLocaleString()} PKR</strong>
+            </div>
+            <div>
+              <small style={{color:'#788293', display:'block', marginBottom:'5px'}}>Other Allowances</small>
+              <strong style={{fontSize:'18px'}}>{sal.other.toLocaleString()} PKR</strong>
+            </div>
+          </div>
+          
+          <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'15px', marginTop:'15px', padding:'15px'}}>
+            <div>
+              <small style={{color:'#788293', display:'block', marginBottom:'5px'}}>Gross Salary</small>
+              <strong style={{fontSize:'20px', color:'#0165FF'}}>{sal.totalGross.toLocaleString()} PKR</strong>
+            </div>
+            <div>
+              <small style={{color:'#788293', display:'block', marginBottom:'5px'}}>Deductions ({sal.violationHours.toFixed(1)} hrs)</small>
+              <strong style={{fontSize:'20px', color:'#dc4545'}}>- {sal.deduction.toLocaleString()} PKR</strong>
+            </div>
+            <div>
+              <small style={{color:'#788293', display:'block', marginBottom:'5px'}}>Net Salary</small>
+              <strong style={{fontSize:'24px', color:'#258763'}}>{sal.netSalary.toLocaleString()} PKR</strong>
+            </div>
+          </div>
+        </section>
+
+        {/* 2. Personal Info Form */}
+        <section className="panel profile-form" style={{padding:'25px'}}>
+          <h2>Personal information</h2>
+          <p className="muted" style={{marginBottom:'20px'}}>Employment details are managed by your administrator.</p>
+          <Form busy={busy} initial={{...me}} fields={[
+            {name:'phone',label:'Phone number',type:'tel'},
+            {name:'address',label:'Address',type:'textarea',wide:true},
+            {name:'emergency_contact',label:'Emergency contact',wide:true,placeholder:'Name, relationship and phone number'}
+          ]} onSubmit={v=>action(()=>store.rpc('update_my_profile',{p_phone:v.phone,p_address:v.address,p_emergency_contact:v.emergency_contact}),'Profile updated',false)}/>
+        </section>
+      </div>
+
+    </div>
+  </>;
+}
   function settings(){
     return <>
       {heading('Workspace settings','Your company’s working rhythm.')}
-      <section className="panel settings-form"><h2>Company & attendance policy</h2><Form busy={busy} initial={{...data.settings,weekend_days:data.settings.weekend_days.join(',')}} fields={[{name:'company_name',label:'Company name',required:true},{name:'timezone',label:'Timezone',required:true,options:opts(['Asia/Karachi','Asia/Dubai','Asia/Kolkata','Europe/London','America/New_York','UTC'])},{name:'work_start',label:'Workday starts',type:'time',required:true},{name:'work_end',label:'Workday ends',type:'time',required:true},{name:'grace_minutes',label:'Late arrival grace (minutes)',type:'number',min:0,max:120,required:true},{name:'weekend_days',label:'Weekly off days',required:true,options:[{value:'0,6',label:'Saturday & Sunday'},{value:'0',label:'Sunday'},{value:'5,6',label:'Friday & Saturday'},{value:'5',label:'Friday'},{value:'none',label:'No weekly off days'}]},{name:'accrual_rate',label:'Monthly accrual rate (days)',type:'number',min:0,max:10,step:0.25,required:true},
+      <section className="panel settings-form"><h2>Company & attendance policy</h2><Form busy={busy} initial={{...data.settings,weekend_days:data.settings.weekend_days.join(',')}} fields={[{name:'company_name',label:'Company name',required:true},{name:'timezone',label:'Timezone',required:true,options:opts(['Asia/Karachi','Asia/Dubai','Asia/Kolkata','Europe/London','America/New_York','UTC'])},{name:'violation_hourly_rate',label:'Violation deduction rate (PKR/hour)',type:'number',min:0,step:50,required:true},{name:'work_start',label:'Workday starts',type:'time',required:true},{name:'work_end',label:'Workday ends',type:'time',required:true},{name:'grace_minutes',label:'Late arrival grace (minutes)',type:'number',min:0,max:120,required:true},{name:'weekend_days',label:'Weekly off days',required:true,options:[{value:'0,6',label:'Saturday & Sunday'},{value:'0',label:'Sunday'},{value:'5,6',label:'Friday & Saturday'},{value:'5',label:'Friday'},{value:'none',label:'No weekly off days'}]},{name:'accrual_rate',label:'Monthly accrual rate (days)',type:'number',min:0,max:10,step:0.25,required:true},
         {name:'accrual_cap',label:'Maximum accrued leaves (days)',type:'number',min:1,max:100,step:1,required:true},{name:'office_ips',label:'Office IP addresses (comma separated)',type:'text',required:false,placeholder:'e.g. 203.0.113.50, 203.0.113.51',wide:true},]}  onSubmit={v=>action(()=>store.rpc('save_settings',{p_settings:{...v,weekend_days:v.weekend_days==='none'?[]:String(v.weekend_days).split(',').map(Number),office_ips:v.office_ips?String(v.office_ips).split(',').map((ip:string)=>ip.trim()).filter(Boolean):[]}}),'Settings saved',false)}/><p className="muted">This version uses one company calendar and same-day shifts. Calendar changes affect attendance labels; submitted leave keeps its recorded day count.</p></section>
       <section className="panel"><div className="panel-heading"><div><h2>Audit history</h2><p>Latest 100 recorded actions</p></div></div><div className="table-scroll"><table><thead><tr><th>ACTION</th><th>BY</th><th>RECORD</th><th>WHEN</th></tr></thead><tbody>{data.audit.slice(0,100).map(a=><tr key={a.id}><td>{a.action.replaceAll('_',' ')}</td><td>{person(a.actor_id)?.name||'System'}</td><td>{a.entity.replaceAll('_',' ')}</td><td>{new Date(a.created_at).toLocaleString('en-GB',{timeZone:data.settings.timezone})}</td></tr>)}</tbody></table></div>{!data.audit.length&&<Empty title="A clean slate" text="Changes and approvals will be recorded here."/>}</section>
     </>;
@@ -444,7 +523,9 @@ export default function HRMS(){
             {name:'designation',label:'Designation',required:true},
             {name:'manager_id',label:'Reporting manager',options:employeeOptions.filter(e=>e.value!==row.id)},
             {name:'joined_on',label:'Joining date',type:'date',required:true},
-            {name:'salary',label:'Monthly salary (PKR)',type:'number',min:0,max:9999999999.99,step:0.01,placeholder:'e.g. 100000'},
+            {name:'basic_salary',label:'Basic Salary (PKR)',type:'number',min:0,step:1000,placeholder:'e.g. 50000'},
+            {name:'house_rent_allowance',label:'House Rent Allowance (PKR)',type:'number',min:0,step:1000,placeholder:'e.g. 20000'},
+            {name:'other_allowances',label:'Other Allowances (PKR)',type:'number',min:0,step:1000,placeholder:'e.g. 5000'},
             {name:'employment_type',label:'Employment type',required:true,options:opts(['Full-time','Part-time','Contract','Intern'])},
             {name:'daily_hours',label:'Daily hours (leave empty for Full-time)',type:'number',min:1,max:24,step:0.5,required:false,placeholder:'e.g. 4 intern, 6 part-time, 8 contract'},
             {name:'monthly_days',label:'Monthly working days (optional)',type:'number',min:1,max:31,placeholder:'Leave empty for all working days'},
@@ -503,8 +584,73 @@ export default function HRMS(){
     if(kind==='day'){const d=String(row.date);const id=String(row.employee_id);const a=data.attendance.find(a=>a.employee_id===id&&a.work_date===d);return <Modal title={fmt(d)} onClose={()=>setModal(null)}><div className="review-summary">{employeeLink(id)}<p><Badge>{attendanceStatus(id,d,data)}</Badge></p><p>{offDay(d,data)}</p><p>Check in: <strong>{timeLabel(a?.check_in||null,data.settings.timezone)}</strong></p><p>Check out: <strong>{timeLabel(a?.check_out||null,data.settings.timezone)}</strong></p><p>Actual working hours: <strong>{durationLabel(workTotals(a,data.breaks,now).workedMs)}</strong></p><p>Break time: <strong>{durationLabel(workTotals(a,data.breaks,now).breakMs)}</strong></p><BreakHistory data={data} attendance={a} now={now}/></div>{id===me!.id&&d<=today&&<div className="form-footer"><button className="button primary" onClick={()=>setModal({kind:'adjustment',row:{date:d}})}>Request adjustment<ArrowUpRight size={16}/></button></div>}</Modal>;}
     return null;
   }
+  function salaryPage(){
+  const rows = allEmployees.filter(e => e.role !== 'admin'); // Admin ki salary nahi dikhayenge
+  
+  return <>
+    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'22px'}}>
+      <div>
+        <h1>Salary & Payroll</h1>
+        <p className="muted" style={{marginTop:'5px'}}>Manage employee salaries and deductions.</p>
+      </div>
+      <input 
+        type="month" 
+        value={month} 
+        onChange={e=>setMonth(e.target.value)} 
+        style={{maxWidth:'180px', minHeight:'41px'}}
+      />
+    </div>
+    
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>EMPLOYEE</th>
+            <th>BASIC</th>
+            <th>HRA</th>
+            <th>OTHER</th>
+            <th>TOTAL GROSS</th>
+            <th>VIOLATIONS</th>
+            <th>DEDUCTION</th>
+            <th>NET SALARY</th>
+            <th>ACTION</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(e => {
+            const sal = calculateSalary(e, month, data, now);
+            return (
+              <tr key={e.id}>
+                <td>{employeeLink(e.id)}</td>
+                <td>{sal.basic.toLocaleString()} PKR</td>
+                <td>{sal.hra.toLocaleString()} PKR</td>
+                <td>{sal.other.toLocaleString()} PKR</td>
+                <td><strong>{sal.totalGross.toLocaleString()} PKR</strong></td>
+                <td><span style={{color:'#a86621'}}>{sal.violationHours.toFixed(1)} h</span></td>
+                <td><span style={{color:'#dc4545'}}>- {sal.deduction.toLocaleString()} PKR</span></td>
+                <td><strong style={{color:'#258763'}}>{sal.netSalary.toLocaleString()} PKR</strong></td>
+                <td>
+                  <button className="icon-button" onClick={() => openEdit('employees', e)}>
+                    <Pencil size={17}/>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+    
+    <div className="panel" style={{marginTop:'20px', padding:'15px'}}>
+      <p className="muted">
+        <strong>Note:</strong> Deductions are calculated based on this month's violations. 
+        Hourly violation rate is {data.settings.violation_hourly_rate} PKR.
+      </p>
+    </div>
+  </>;
+}
 
-  const screens:Record<string,()=>React.ReactNode>={overview,employees,attendance,leaves:leavePage,'off-days':offDays,customers,projects,allocations,approvals:()=>approvals(false),adjustments:()=>approvals(true),profile,settings};
+  const screens:Record<string,()=>React.ReactNode>={overview,employees,attendance,leaves:leavePage,'off-days':offDays,customers,projects,allocations,approvals:()=>approvals(false),adjustments:()=>approvals(true),profile,settings, salaries: salaryPage};
   const allowed=nav.some(n=>n[0]===section);
 
     return <div className="app-shell">{mobile&&<button className="sidebar-scrim" aria-label="Close navigation" onClick={()=>setMobile(false)}/>}<aside className={'sidebar '+(mobile?'open':'')}><Link href={base} className="brand"><img src="/favicon.svg" alt="Hudasoft" className="brand-logo" />hudasoft<span className="brand-dot">.</span></Link><div className="workspace-label"><span className="workspace-icon">{data.settings.company_name.slice(0,1)}</span><div><strong>{data.settings.company_name}</strong><small>{isAdmin?'Admin workspace':'Employee workspace'}</small></div><ChevronDown size={15}/></div><span className="nav-label">WORKSPACE</span><nav>{nav.map(([slug,label,Icon])=><Link key={slug} href={base+'/'+slug} className={section===slug?'active':''}><Icon size={19}/><span>{label}</span>{slug==='approvals'&&pending>0&&<b>{pending}</b>}</Link>)}</nav><div className="sidebar-bottom">{me.role==='admin'&&<Link className="portal-switch" href={isAdmin?'/employee':'/admin'}><RefreshCw size={16}/>{isAdmin?'Employee view':'Admin workspace'}<ArrowUpRight size={15}/></Link>}<div className="sidebar-user"><Avatar name={me.name} small/><div><strong>{me.name}</strong><small>{me.role==='admin'?'Administrator':'Employee'}</small></div><button aria-label="Sign out" className="icon-button" onClick={()=>{try{localStorage.removeItem('hudasoft_cached_me');}catch{};action(store.signOut,'Signed out',false)}}><LogOut size={17}/></button></div></div></aside><div className="main-shell"><header className="topbar"><div><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={()=>setMobile(true)}><Menu size={23}/></button><span className="breadcrumb">Workspace <ChevronRight size={14}/> <strong>{nav.find(n=>n[0]===section)?.[1]||'Overview'}</strong></span></div><div className="topbar-right">{demo?<span className="demo-tag">Demo workspace</span>:<span className="connected"><ShieldCheck size={15}/>Secure workspace</span>}<span className="header-divider"/><Avatar name={me.name} small/><span className="header-name">{me.name.split(' ')[0]}</span></div></header>{demo&&<div className="demo-banner"><span>Sample data · Changes are saved only in this browser.</span><button onClick={()=>action(store.signOut,'Demo closed',false)}>Exit demo <ArrowRight size={13}/></button></div>}<main className="content">{error&&!modal&&<div className="error" role="alert">{error}<button aria-label="Dismiss error" className="icon-button" onClick={()=>store.setError('')}><X size={16}/></button></div>}{allowed?(screens[section]||overview)():<Empty title="Page not found" text="Choose a page from the navigation."/>}<footer className="page-footer"><span>hudasoft<span className="brand-dot">.</span></span><small>People first. Always.</small></footer></main></div>{modalContent()}{notice&&<div className="toast" role="status"><Check size={18}/>{notice}</div>}{mounted&&(loading||navigating)&&<div className="island-loader">
