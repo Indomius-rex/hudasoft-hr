@@ -19,7 +19,41 @@ export function useHRMS(){
  async function signOut(){if(demo){const saved=localStorage.getItem('Hudasoft-demo-data-v1');const latest=saved?normalizeDemo(JSON.parse(saved) as Data):data;if(latest.breaks.some(b=>b.employee_id===me?.id&&!b.ended_at))throw new Error('End your active break before signing out.');}if(supabase&&!demo){const check=await supabase.rpc('assert_can_sign_out');if(check.error)throw check.error;const {error}=await supabase.auth.signOut();if(error)throw error;}sessionStorage.removeItem('Hudasoft-demo');setMe(null);setDemo(false);setError('');}
  async function save(entity:Entity,payload:Record<string,unknown>){await run(async()=>{if(me?.role!=='admin')throw new Error('Administrator access required.');if(entity==='employees'&&payload.salary!=null&&(!Number.isFinite(Number(payload.salary))||Number(payload.salary)<0||Number(payload.salary)>9999999999.99))throw new Error('Enter a salary between 0 and 9,999,999,999.99.');const next=structuredClone(data);const id=payload.id as string|undefined;const row:Record<string,unknown>&{id:string}={...payload,id:id||crypto.randomUUID()};if(entity==='allocations'){if(String(row.start_date)>String(row.end_date))throw new Error('End date must follow start date.');if(allocationPeak(String(row.employee_id),String(row.start_date),String(row.end_date),Number(row.percentage),data,id)>100)throw new Error('This assignment exceeds 100% allocation for overlapping dates.');}if(demo){const list=next[entity] as unknown as Record<string,unknown>[];const index=list.findIndex(r=>r.id===row.id);if(index>=0)list[index]={...list[index],...row};else list.push(row);next.audit.unshift({id:crypto.randomUUID(),actor_id:me.id,action:id?'updated':'created',entity,record_id:row.id,created_at:new Date().toISOString(),details:row});commit(next);}else{const {id:ignoredId,...values}=payload;const result=id?await supabase!.from(entity).update(values).eq('id',id):await supabase!.from(entity).insert(values);if(result.error)throw result.error;await load();}});}
  async function remove(entity:Entity,id:string){await run(async()=>{if(me?.role!=='admin')throw new Error('Administrator access required.');if(demo){const next=structuredClone(data);(next[entity] as unknown[])=(next[entity] as {id:string}[]).filter(r=>r.id!==id);commit(next);}else{const {error}=await supabase!.from(entity).delete().eq('id',id);if(error)throw error;await load();}});}
- async function rpc(name:string,args:Record<string,unknown>={}){await run(async()=>{if(!me)throw new Error('Sign in first.');if(!demo){const {error}=await supabase!.rpc(name,args);if(error)throw error;await load();return;}const saved=localStorage.getItem('Hudasoft-demo-data-v1');const next=saved?normalizeDemo(JSON.parse(saved) as Data):structuredClone(data);const now=new Date().toISOString();const today=dayKey(now,data.settings.timezone);
+ async function rpc(name:string,args:Record<string,unknown>={}){await run(async()=>{if(!me)throw new Error('Sign in first.');
+if(!demo){  
+  const {error}=await supabase!.rpc(name,args);
+  if(error)throw error;
+
+  await load();
+
+  if (name === 'request_adjustment') {
+    // ✅ Direct Supabase function se manager email nikalo
+    const { data: managerEmail, error: emailError } = await supabase!.rpc('get_manager_email', { p_employee_id: me.id });
+    
+    console.log('Debug - My Manager ID:', me.manager_id);
+    console.log('Debug - Manager Email:', managerEmail);
+
+    if (managerEmail && !emailError) {
+      fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: managerEmail,
+          employeeName: me.name,
+          requestType: 'Attendance Adjustment',
+          requestDetails: `Date: ${args.p_date}. Reason: ${args.p_reason}`,
+          reviewLink: `${window.location.origin}/admin/approvals`,
+        }),
+      }).then(res => res.json())
+        .then(res => console.log('Email API Response:', res))
+        .catch(err => console.error('Email send failed:', err));
+    } else {
+      console.warn('Email not sent: Manager email not found.');
+    }
+  }
+  return;
+}
+    const saved=localStorage.getItem('Hudasoft-demo-data-v1');const next=saved?normalizeDemo(JSON.parse(saved) as Data):structuredClone(data);const now=new Date().toISOString();const today=dayKey(now,data.settings.timezone);
  if(name==='clock_attendance'){
   const officeIps = next.settings.office_ips || [];
   if (officeIps.length > 0) {
@@ -67,8 +101,30 @@ export function useHRMS(){
   next.leaves.unshift({
     id:crypto.randomUUID(), employee_id:me.id, type:'accrued', start_date:start, end_date:end, half_day:half, days, reason:String(args.p_reason), status:'pending', review_comment:'', created_at:now
   });
+
 }
- if(name==='request_adjustment'){const date=String(args.p_date);if(date>today)throw new Error('Future attendance cannot be adjusted.');if(next.adjustments.some(r=>r.employee_id===me.id&&r.work_date===date&&r.status==='pending'))throw new Error('An adjustment is already pending for this date.');const ri=String(args.p_in),ro=args.p_out?String(args.p_out):null;if(ro&&ro<=ri)throw new Error('Check-out must follow check-in.');if(ri>now||ro&&ro>now)throw new Error('Attendance times cannot be in the future.');next.adjustments.unshift({id:crypto.randomUUID(),employee_id:me.id,work_date:date,requested_in:ri,requested_out:ro,reason:String(args.p_reason),status:'pending',review_comment:'',created_at:now});}
+ if(name==='request_adjustment'){const date=String(args.p_date);if(date>today)throw new Error('Future attendance cannot be adjusted.');if(next.adjustments.some(r=>r.employee_id===me.id&&r.work_date===date&&r.status==='pending'))throw new Error('An adjustment is already pending for this date.');const ri=String(args.p_in),ro=args.p_out?String(args.p_out):null;if(ro&&ro<=ri)throw new Error('Check-out must follow check-in.');if(ri>now||ro&&ro>now)throw new Error('Attendance times cannot be in the future.');next.adjustments.unshift({id:crypto.randomUUID(),employee_id:me.id,work_date:date,requested_in:ri,requested_out:ro,reason:String(args.p_reason),status:'pending',review_comment:'',created_at:now});
+    // ✅ SMTP Email Notification for Adjustment
+    const managerAdj = next.employees.find(e => e.id === me.manager_id);
+    const targetEmailAdj = managerAdj?.email || 'syedmustafaali463@gmail.com'; // Fallback email
+
+    console.log('Debug - Manager ID:', me.manager_id);
+    console.log('Debug - Manager Email:', targetEmailAdj);
+
+    if (targetEmailAdj) {
+      fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: targetEmailAdj,
+          employeeName: me.name,
+          requestType: 'Attendance Adjustment',
+          requestDetails: `Date: ${date}. Requested In: ${ri}, Out: ${ro}. Reason: ${args.p_reason}`,
+          reviewLink: `${window.location.origin}/admin/approvals`,
+        }),
+      }).catch(err => console.error('Email send failed:', err));
+    }
+  }
  if(name==='review_request'){
   if(me.role!=='admin') throw new Error('Administrator access required.');
   const list = args.p_kind==='leave' ? next.leaves : next.adjustments;
