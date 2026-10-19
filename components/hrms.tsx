@@ -15,8 +15,27 @@ import {Avatar,Badge,Empty,SearchBox,Modal,Form,Field} from './ui';
 import { calculateSalary } from '@/lib/salary';
 
 
-const adminNav=[['overview','Overview',LayoutDashboard],['employees','Employees',Users],['attendance','Attendance',Clock3],['leaves','Leave management',CalendarDays],['off-days','Off-day calendar',CalendarOff],['allocations','Team allocation',Network],['approvals','Approvals',ClipboardCheck],['settings','Settings',Settings],['salaries', 'Salaries', BriefcaseBusiness] ] as const;
-const employeeNav=[['overview','Overview',LayoutDashboard],['attendance','My attendance',Clock3],['leaves','My leave',CalendarDays],['adjustments','Attendance adjustments',FileClock],['profile','My profile',UserRound]] as const;
+const adminNav=[
+  ['overview','Overview',LayoutDashboard],
+  ['employees','Employees',Users],
+  ['attendance','Attendance',Clock3],
+  ['leaves','Leave management',CalendarDays],
+  ['off-days','Off-day calendar',CalendarOff],
+  ['customers','Customers',Building2],        // ← Wapas add kiya
+  ['projects','Projects',FolderKanban],       // ← Wapas add kiya
+  ['allocations','Team allocation',Network],  // ← Wapas add kiya
+  ['approvals','Approvals',ClipboardCheck],
+  ['settings','Settings',Settings],
+  ['salaries', 'Salaries', BriefcaseBusiness]
+] as const;
+const employeeNav=[
+  ['overview','Overview',LayoutDashboard],
+  ['attendance','My attendance',Clock3],
+  ['leaves','My leave',CalendarDays],
+  ['adjustments','Attendance adjustments',FileClock],
+  ['projects','My projects',FolderKanban],
+  ['profile','My profile',UserRound]
+] as const;
 const opts=(values:string[])=>values.map(value=>({value,label:value.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase())}));
 const fmt=(date:string)=>new Date(date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
@@ -73,7 +92,19 @@ export default function HRMS(){
     const t = setTimeout(()=>setNavigating(false), 600);
     return ()=>clearTimeout(t);
   },[path]);
-  useEffect(()=>{if(me&&(path==='/'||me.role==='employee'&&path.startsWith('/admin')))router.replace(me.role==='admin'?'/admin':'/employee');},[me,path,router]);
+  useEffect(()=>{
+  if(me){
+    // Agar employee /admin pe jane ki koshish kare, to usko wapas bhej do
+    if(me.role==='employee' && path.startsWith('/admin')){
+      router.replace('/employee');
+      return;
+    }
+    // Agar admin root pe aaye, to usko admin dashboard pe bhej do
+    if(path==='/'){
+      router.replace(me.role==='admin' ? '/admin' : '/employee');
+    }
+  }
+},[me,path,router]);
   useEffect(()=>{if(!notice)return;const timeout=setTimeout(()=>setNotice(''),4500);return()=>clearTimeout(timeout);},[notice]);
 
   const [now,setNow]=useState(Date.now);
@@ -359,12 +390,19 @@ export default function HRMS(){
   }
 
   function projects(){
-    const myIds=new Set(data.allocations.filter(a=>a.employee_id===me!.id).map(a=>a.project_id));
-    const rows=data.projects.filter(p=>(isAdmin||myIds.has(p.id))&&matches(p.name)&&(statusFilter==='all'||p.status===statusFilter));
+    // Employee jis project ka manager hai YA jisme allocate hua hai
+    const myIds = new Set(
+      data.projects.filter(p => p.manager_id === me!.id || data.allocations.some(a => a.project_id === p.id && a.employee_id === me!.id)).map(p => p.id));
+    const rows = data.projects.filter(p => (isAdmin || myIds.has(p.id)) && matches(p.name) && (statusFilter === 'all' || p.status === statusFilter));
     return <>
       {heading(isAdmin?'Projects':'My projects',isAdmin?'The big picture, with every detail in place.':'See where you’re making an impact.',isAdmin?{label:'New project',fn:()=>openEdit('projects')}:undefined)}
       <div className="toolbar standalone"><SearchBox value={query} onChange={setQuery} placeholder="Search projects…"/><select aria-label="Project status" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">All projects</option>{opts(['planned','active','on_hold','completed','cancelled']).map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
-      <div className="project-grid">{rows.map(p=>{const assignments=data.allocations.filter(a=>a.project_id===p.id);return <section className="panel project-card" key={p.id}><div className="project-card-top"><span className="project-symbol"><FolderKanban size={22}/></span><Badge>{p.status}</Badge>{isAdmin&&<button className="icon-button" aria-label={'Edit '+p.name} onClick={()=>openEdit('projects',p)}><Pencil size={17}/></button>}</div><small className="eyebrow">{customer(p.customer_id)?.name||'Assigned project'}</small><h2>{p.name}</h2><p className="project-description">{p.description||'No description added.'}</p><div className="progress-label"><span>Progress</span><strong>{p.progress}%</strong></div><progress max={100} value={p.progress}/><div className="project-dates"><CalendarDays size={15}/>{fmt(p.start_date)} — {fmt(p.end_date)}</div><div className="project-bottom"><div className="avatar-stack">{assignments.slice(0,4).map(a=><Avatar key={a.id} name={person(a.employee_id)?.name||'Employee'} small/>)}</div><span>{assignments.length} assigned</span><Badge>{p.priority}</Badge></div>{!isAdmin&&assignments.filter(a=>a.employee_id===me!.id).map(a=><p className="assignment-note" key={a.id}>{a.role} · {a.percentage}% · {fmt(a.start_date)} – {fmt(a.end_date)}</p>)}</section>;})}</div>
+      <div className="project-grid">{rows.map(p=>{const assignments=data.allocations.filter(a=>a.project_id===p.id);return <section className="panel project-card" key={p.id}><div className="project-card-top"><span className="project-symbol"><FolderKanban size={22}/></span><Badge>{p.status}</Badge>{isAdmin&&<button className="icon-button" aria-label={'Edit '+p.name} onClick={()=>openEdit('projects',p)}><Pencil size={17}/></button>}</div><small className="eyebrow">{customer(p.customer_id)?.name||'Assigned project'}</small><h2>{p.name}</h2><p className="project-description">{p.description||'No description added.'}</p><div className="progress-label"><span>Progress</span><strong>{p.progress}%</strong></div><progress max={100} value={p.progress}/>{(!isAdmin && (p.manager_id === me!.id || data.allocations.some(a => a.project_id === p.id && a.employee_id === me!.id))) && (
+        <button className="button compact primary" style={{marginTop: '10px'}} onClick={() => openEdit('projects', p)}>
+          <Pencil size={14}/> Update Progress
+        </button>
+      )}
+      <div className="project-dates"><CalendarDays size={15}/>{fmt(p.start_date)} — {fmt(p.end_date)}</div><div className="project-bottom"><div className="avatar-stack">{assignments.slice(0,4).map(a=><Avatar key={a.id} name={person(a.employee_id)?.name||'Employee'} small/>)}</div><span>{assignments.length} assigned</span><Badge>{p.priority}</Badge></div>{!isAdmin&&assignments.filter(a=>a.employee_id===me!.id).map(a=><p className="assignment-note" key={a.id}>{a.role} · {a.percentage}% · {fmt(a.start_date)} – {fmt(a.end_date)}</p>)}</section>;})}</div>
       {!rows.length&&<section className="panel"><Empty title="No projects to show" text={isAdmin?'Create a project and bring the right people together.':'Your project assignments will appear here.'}/></section>}
     </>;
   }
@@ -536,7 +574,21 @@ export default function HRMS(){
           ];
         }
       if(kind==='customers'){title=row.id?'Edit customer':'Add customer';defaults={status:'active'};fields=[{name:'name',label:'Company name',required:true},{name:'contact_name',label:'Contact person',required:true},{name:'email',label:'Email',type:'email',required:true},{name:'phone',label:'Phone',type:'tel'},{name:'status',label:'Status',required:true,options:opts(['active','inactive'])},{name:'address',label:'Address',type:'textarea',wide:true}];}
-      if(kind==='projects'){title=row.id?'Edit project':'New project';defaults={start_date:today,end_date:addDays(today,30),status:'planned',priority:'medium',progress:0};fields=[{name:'name',label:'Project name',required:true,wide:true},{name:'customer_id',label:'Customer',required:true,options:data.customers.map(c=>({value:c.id,label:c.name}))},{name:'manager_id',label:'Project manager',options:employeeOptions},{name:'start_date',label:'Start date',type:'date',required:true},{name:'end_date',label:'End date',type:'date',required:true},{name:'status',label:'Status',required:true,options:opts(['planned','active','on_hold','completed','cancelled'])},{name:'priority',label:'Priority',required:true,options:opts(['low','medium','high'])},{name:'progress',label:'Progress (%)',type:'number',min:0,max:100,required:true},{name:'description',label:'Description',type:'textarea',wide:true}];}
+      if(kind==='projects'){
+        const isProjectManager = row.manager_id === me!.id;
+        const isAllocated = data.allocations.some(a => a.project_id === row.id && a.employee_id === me!.id);
+        const canOnlyUpdateProgress = !isAdmin && (isProjectManager || isAllocated);
+
+        title = row.id ? (canOnlyUpdateProgress ? 'Update Progress' : 'Edit project') : 'New project';
+        
+        if (canOnlyUpdateProgress) {
+          // Sirf progress field dikhao
+          fields = [{name:'progress',label:'Progress (%)',type:'number',min:0,max:100,required:true}];
+          defaults = {progress: row.progress || 0};
+        } else {
+          // Admin ke liye saare fields
+          defaults={start_date:today,end_date:addDays(today,30),status:'planned',priority:'medium',progress:0};
+          fields=[{name:'name',label:'Project name',required:true,wide:true},{name:'customer_id',label:'Customer',required:true,options:data.customers.map(c=>({value:c.id,label:c.name}))},{name:'manager_id',label:'Project manager',options:employeeOptions},{name:'start_date',label:'Start date',type:'date',required:true},{name:'end_date',label:'End date',type:'date',required:true},{name:'status',label:'Status',required:true,options:opts(['planned','active','on_hold','completed','cancelled'])},{name:'priority',label:'Priority',required:true,options:opts(['low','medium','high'])},{name:'progress',label:'Progress (%)',type:'number',min:0,max:100,required:true},{name:'description',label:'Description',type:'textarea',wide:true}];}}
       if(kind==='allocations'){title=row.id?'Edit allocation':'Allocate an employee';defaults={start_date:today,end_date:addDays(today,30),percentage:50};fields=[{name:'employee_id',label:'Employee',required:true,options:employeeOptions},{name:'project_id',label:'Project',required:true,options:data.projects.filter(p=>!['completed','cancelled'].includes(p.status)).map(p=>({value:p.id,label:p.name}))},{name:'role',label:'Project role',required:true},{name:'percentage',label:'Allocation (%)',required:true,type:'number',min:1,max:100},{name:'start_date',label:'From',type:'date',required:true},{name:'end_date',label:'Until',type:'date',required:true}];}
       if(kind==='holidays'){title=row.id?'Edit off day':'Add off day';defaults={date:today,kind:'company'};fields=[{name:'name',label:'Holiday name',required:true,wide:true},{name:'date',label:'Date',type:'date',required:true},{name:'kind',label:'Type',required:true,options:opts(['public','company'])}];}
       return <Modal title={title} onClose={()=>setModal(null)}>{error&&<div className="error" role="alert">{error}</div>}<Form fields={fields} initial={{...defaults,...row}} busy={busy} label={row.id?'Save changes':'Create record'} onSubmit={v=>{
