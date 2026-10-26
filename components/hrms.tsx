@@ -13,6 +13,7 @@ import {dayKey,addDays,dateRange,attendanceStatus,offDay,timeLabel,hours,localTo
 import {supabase,demoEnabled} from '@/lib/supabase';
 import {Avatar,Badge,Empty,SearchBox,Modal,Form,Field} from './ui';
 import { calculateSalary } from '@/lib/salary';
+import ExperienceCertificate from './experience-certificate';
 
 
 const adminNav=[
@@ -44,6 +45,8 @@ export default function HRMS(){
   const {data,me:rawMe,demo,loading,error,busy}=store;
   const [cachedMe,setCachedMe]=useState<typeof rawMe>(null);
 
+
+  
     useEffect(()=>{
       try{
         const raw=localStorage.getItem('hudasoft_cached_me');
@@ -75,6 +78,7 @@ export default function HRMS(){
   const [modal,setModal]=useState<{kind:string;row?:Record<string,unknown>}|null>(null);
   const [notice,setNotice]=useState('');
   const [view,setView]=useState('list');
+  const [certificateEmployee, setCertificateEmployee] = useState<Employee | null>(null);
   const [navigating,setNavigating]=useState(false);
   const [mounted,setMounted]=useState(false);
   
@@ -151,6 +155,13 @@ export default function HRMS(){
   const matches=(value:string)=>value.toLowerCase().includes(query.toLowerCase());
   const activeAlloc=(id:string)=>data.allocations.filter(a=>a.employee_id===id&&a.start_date<=today&&a.end_date>=today).reduce((n,a)=>n+a.percentage,0);
   const go=(slug:string)=>router.push(base+'/'+slug);
+  const handlePrintCertificate = (emp: Employee) => {
+      setCertificateEmployee(emp); // Certificate state set karo
+      setTimeout(() => {
+        window.print(); // Print dialog kholo (thoda delay taake DOM render ho jaye)
+        setCertificateEmployee(null); // Print ke baad reset kardo (optional)
+      }, 500);
+    };
 
   function employeeCell(id:string|null){const e=person(id);return <div className="person"><Avatar name={e?.name||'Unknown'} small/><div><strong>{e?.name||'Unknown employee'}</strong><small>{e?.designation||'—'}</small></div></div>;}
   function employeeLink(id:string|null){
@@ -257,7 +268,14 @@ export default function HRMS(){
                 return `${((eH * 60 + eM - sH * 60 - sM) / 60).toFixed(1)} h`;
               })()
           }
-        </td><td>{e.monthly_days ?`${e.monthly_days} days` : 'All'}</td><td><strong>{(e.accrued_leaves||0).toFixed(1)} h</strong><small>≈ {(((e.accrued_leaves||0))/(e.daily_hours||9)).toFixed(1)} d</small></td><td>{fmt(e.joined_on)}</td><td><Badge>{e.status}</Badge></td><td className="capitalize">{e.role}</td><td><button className="icon-button" aria-label={'Edit '+e.name} onClick={()=>openEdit('employees',e)}><Pencil size={17}/></button></td></tr>)}</tbody></table></div>
+        </td><td>{e.monthly_days ?`${e.monthly_days} days` : 'All'}</td><td><strong>{(e.accrued_leaves||0).toFixed(1)} h</strong><small>≈ {(((e.accrued_leaves||0))/(e.daily_hours||9)).toFixed(1)} d</small></td><td>{fmt(e.joined_on)}</td><td><Badge>{e.status}</Badge></td><td className="capitalize">{e.role}</td><td style={{ display: 'flex', gap: '5px' }}>
+  <button className="icon-button" aria-label={'Edit '+e.name} onClick={()=>openEdit('employees',e)}>
+    <Pencil size={17}/>
+  </button>
+  <button className="button compact" style={{ backgroundColor: '#0165FF', color: 'white' }} onClick={() => handlePrintCertificate(e)}>
+    <Download size={16}/> Certificate
+  </button>
+</td></tr>)}</tbody></table></div>
         {!rows.length&&<Empty title="No employees found" text="Add an employee or try a different search."/>}
         <div className="panel-foot">{rows.length} employees</div>
       </section>
@@ -636,6 +654,8 @@ export default function HRMS(){
     if(kind==='day'){const d=String(row.date);const id=String(row.employee_id);const a=data.attendance.find(a=>a.employee_id===id&&a.work_date===d);return <Modal title={fmt(d)} onClose={()=>setModal(null)}><div className="review-summary">{employeeLink(id)}<p><Badge>{attendanceStatus(id,d,data)}</Badge></p><p>{offDay(d,data)}</p><p>Check in: <strong>{timeLabel(a?.check_in||null,data.settings.timezone)}</strong></p><p>Check out: <strong>{timeLabel(a?.check_out||null,data.settings.timezone)}</strong></p><p>Actual working hours: <strong>{durationLabel(workTotals(a,data.breaks,now).workedMs)}</strong></p><p>Break time: <strong>{durationLabel(workTotals(a,data.breaks,now).breakMs)}</strong></p><BreakHistory data={data} attendance={a} now={now}/></div>{id===me!.id&&d<=today&&<div className="form-footer"><button className="button primary" onClick={()=>setModal({kind:'adjustment',row:{date:d}})}>Request adjustment<ArrowUpRight size={16}/></button></div>}</Modal>;}
     return null;
   }
+
+
   function salaryPage(){
   const rows = allEmployees.filter(e => e.role !== 'admin'); // Admin ki salary nahi dikhayenge
   
@@ -705,7 +725,16 @@ export default function HRMS(){
   const screens:Record<string,()=>React.ReactNode>={overview,employees,attendance,leaves:leavePage,'off-days':offDays,customers,projects,allocations,approvals:()=>approvals(false),adjustments:()=>approvals(true),profile,settings, salaries: salaryPage};
   const allowed=nav.some(n=>n[0]===section);
 
-    return <div className="app-shell">{mobile&&<button className="sidebar-scrim" aria-label="Close navigation" onClick={()=>setMobile(false)}/>}<aside className={'sidebar '+(mobile?'open':'')}><Link href={base} className="brand"><img src="/favicon.svg" alt="Hudasoft" className="brand-logo" />hudasoft<span className="brand-dot">.</span></Link><div className="workspace-label"><span className="workspace-icon">{data.settings.company_name.slice(0,1)}</span><div><strong>{data.settings.company_name}</strong><small>{isAdmin?'Admin workspace':'Employee workspace'}</small></div><ChevronDown size={15}/></div><span className="nav-label">WORKSPACE</span><nav>{nav.map(([slug,label,Icon])=><Link key={slug} href={base+'/'+slug} className={section===slug?'active':''}><Icon size={19}/><span>{label}</span>{slug==='approvals'&&pending>0&&<b>{pending}</b>}</Link>)}</nav><div className="sidebar-bottom">{me.role==='admin'&&<Link className="portal-switch" href={isAdmin?'/employee':'/admin'}><RefreshCw size={16}/>{isAdmin?'Employee view':'Admin workspace'}<ArrowUpRight size={15}/></Link>}<div className="sidebar-user"><Avatar name={me.name} small/><div><strong>{me.name}</strong><small>{me.role==='admin'?'Administrator':'Employee'}</small></div><button aria-label="Sign out" className="icon-button" onClick={()=>{try{localStorage.removeItem('hudasoft_cached_me');}catch{};action(store.signOut,'Signed out',false)}}><LogOut size={17}/></button></div></div></aside><div className="main-shell"><header className="topbar"><div><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={()=>setMobile(true)}><Menu size={23}/></button><span className="breadcrumb">Workspace <ChevronRight size={14}/> <strong>{nav.find(n=>n[0]===section)?.[1]||'Overview'}</strong></span></div><div className="topbar-right">{demo?<span className="demo-tag">Demo workspace</span>:<span className="connected"><ShieldCheck size={15}/>Secure workspace</span>}<span className="header-divider"/><Avatar name={me.name} small/><span className="header-name">{me.name.split(' ')[0]}</span></div></header>{demo&&<div className="demo-banner"><span>Sample data · Changes are saved only in this browser.</span><button onClick={()=>action(store.signOut,'Demo closed',false)}>Exit demo <ArrowRight size={13}/></button></div>}<main className="content">{error&&!modal&&<div className="error" role="alert">{error}<button aria-label="Dismiss error" className="icon-button" onClick={()=>store.setError('')}><X size={16}/></button></div>}{allowed?(screens[section]||overview)():<Empty title="Page not found" text="Choose a page from the navigation."/>}<footer className="page-footer"><span>hudasoft<span className="brand-dot">.</span></span><small>People first. Always.</small></footer></main></div>{modalContent()}{notice&&<div className="toast" role="status"><Check size={18}/>{notice}</div>}{mounted&&(loading||navigating)&&<div className="island-loader">
+    return <div className="app-shell">{mobile&&<button className="sidebar-scrim" aria-label="Close navigation" onClick={()=>setMobile(false)}/>}<aside className={'sidebar '+(mobile?'open':'')}><Link href={base} className="brand"><img src="/favicon.svg" alt="Hudasoft" className="brand-logo" />hudasoft<span className="brand-dot">.</span></Link><div className="workspace-label"><span className="workspace-icon">{data.settings.company_name.slice(0,1)}</span><div><strong>{data.settings.company_name}</strong><small>{isAdmin?'Admin workspace':'Employee workspace'}</small></div><ChevronDown size={15}/></div><span className="nav-label">WORKSPACE</span><nav>{nav.map(([slug,label,Icon])=><Link key={slug} href={base+'/'+slug} className={section===slug?'active':''}><Icon size={19}/><span>{label}</span>{slug==='approvals'&&pending>0&&<b>{pending}</b>}</Link>)}</nav><div className="sidebar-bottom">{me.role==='admin'&&<Link className="portal-switch" href={isAdmin?'/employee':'/admin'}><RefreshCw size={16}/>{isAdmin?'Employee view':'Admin workspace'}<ArrowUpRight size={15}/></Link>}<div className="sidebar-user"><Avatar name={me.name} small/><div><strong>{me.name}</strong><small>{me.role==='admin'?'Administrator':'Employee'}</small></div><button aria-label="Sign out" className="icon-button" onClick={()=>{try{localStorage.removeItem('hudasoft_cached_me');}catch{};action(store.signOut,'Signed out',false)}}><LogOut size={17}/></button></div></div></aside><div className="main-shell"><header className="topbar"><div><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={()=>setMobile(true)}><Menu size={23}/></button><span className="breadcrumb">Workspace <ChevronRight size={14}/> <strong>{nav.find(n=>n[0]===section)?.[1]||'Overview'}</strong></span></div><div className="topbar-right">{demo?<span className="demo-tag">Demo workspace</span>:<span className="connected"><ShieldCheck size={15}/>Secure workspace</span>}<span className="header-divider"/><Avatar name={me.name} small/><span className="header-name">{me.name.split(' ')[0]}</span></div></header>{demo&&<div className="demo-banner"><span>Sample data · Changes are saved only in this browser.</span><button onClick={()=>action(store.signOut,'Demo closed',false)}>Exit demo <ArrowRight size={13}/></button></div>}<main className="content">{error&&!modal&&<div className="error" role="alert">{error}<button aria-label="Dismiss error" className="icon-button" onClick={()=>store.setError('')}><X size={16}/></button></div>}{allowed?(screens[section]||overview)():<Empty title="Page not found" text="Choose a page from the navigation."/>}<footer className="page-footer"><span>hudasoft<span className="brand-dot">.</span></span><small>People first. Always.</small></footer></main></div>{modalContent()}{notice&&<div className="toast" role="status"><Check size={18}/>{notice}</div>}
+{/* ✅ Hidden Certificate for Printing */}
+{certificateEmployee && (
+  <div id="certificate-print-area" style={{ display: 'none' }}>
+    <ExperienceCertificate 
+      employee={certificateEmployee} 
+      companyName={data.settings.company_name} 
+    />
+  </div>
+)}{mounted&&(loading||navigating)&&<div className="island-loader">
   
   <div className="island">
     <span className="island-mark">H</span>

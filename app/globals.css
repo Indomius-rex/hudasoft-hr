@@ -116,3 +116,38 @@ body{font-size:16px}.sidebar nav a,.person strong,td,td strong,.attention-row st
   0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
   30%           { opacity: 1;    transform: translateY(-3px); }
 }
+@media print {
+  @page {
+    size: A4;
+    margin: 20mm; /* Normal margins taake text kinare se na takraye */
+  }
+  
+  body {
+    margin: 0;
+    padding: 0;
+    background: white;
+  }
+
+  /* Poora page chhupa do */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Sirf certificate wala text show karo */
+  #certificate-print-area, #certificate-print-area * {
+    visibility: visible;
+  }
+  
+  #certificate-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    display: block !important;
+    background: white;
+    /* Koi border ya box shadow nahi */
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+}
