@@ -14,6 +14,7 @@ import {supabase,demoEnabled} from '@/lib/supabase';
 import {Avatar,Badge,Empty,SearchBox,Modal,Form,Field} from './ui';
 import { calculateSalary } from '@/lib/salary';
 import ExperienceCertificate from './experience-certificate';
+import * as XLSX from 'xlsx';
 
 
 const adminNav=[
@@ -44,7 +45,7 @@ export default function HRMS(){
   const store=useHRMS();
   const {data,me:rawMe,demo,loading,error,busy}=store;
   const [cachedMe,setCachedMe]=useState<typeof rawMe>(null);
-
+  const [importing, setImporting] = useState(false);
 
   
     useEffect(()=>{
@@ -162,7 +163,149 @@ export default function HRMS(){
         setCertificateEmployee(null); // Print ke baad reset kardo (optional)
       }, 500);
     };
+        const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
+    setImporting(true);
+    store.setError('');
+
+    try {
+      const dataBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(dataBuffer);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: "" }) as any[][];
+      
+      if (jsonData.length < 2) throw new Error("Excel file khali hai.");
+
+      // 1. Email Column dhoondo
+      let emailColIdx = -1;
+      for (let r = 0; r < Math.min(5, jsonData.length); r++) {
+        const idx = jsonData[r].findIndex((c: any) => String(c).toLowerCase().includes('email'));
+        if (idx !== -1) {
+          emailColIdx = idx;
+          break;
+        }
+      }
+
+      if (emailColIdx === -1) {
+        throw new Error("Excel mein 'Email' ka column nahi mila. Pehli row mein 'Email' likha hona chahiye.");
+      }
+
+      const recordsToImport: any[] = [];
+
+      // 2. Row 1 (Header) se Dates nikalo
+      const dateRow = jsonData[0];
+      const dates: string[] = [];
+      
+      // Column B se lekar F tak dates check karo
+      for (let c = emailColIdx + 1; c < dateRow.length; c++) {
+        const rawDate = dateRow[c];
+        let dateStr = '';
+        
+        if (rawDate) {
+          if (typeof rawDate === 'number') {
+            // Excel serial date
+            const dateObj = XLSX.SSF.parse_date_code(rawDate);
+            dateStr = `${dateObj.y}-${String(dateObj.m).padStart(2, '0')}-${String(dateObj.d).padStart(2, '0')}`;
+          } else {
+            const strDate = String(rawDate).trim();
+            if (strDate.includes('/')) {
+              const parts = strDate.split('/');
+              if (parts.length === 3) {
+                dateStr = `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+              }
+            } else {
+               dateStr = strDate.split(' ')[0];
+            }
+          }
+        }
+        
+        // Agar date sahi mil gayi toh push karo, warna blank rakho (TotalHours skip karne ke liye)
+        if (dateStr && dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          dates.push(dateStr);
+        } else {
+          dates.push(''); // TotalHours yahan aayega, isliye blank push hoga
+        }
+      }
+
+      // 3. Helper Function: Time Formatting
+      const formatTime = (timeVal: any) => {
+        if (!timeVal) return null;
+        let numVal = Number(timeVal);
+        
+        if (!isNaN(numVal) && numVal < 1 && numVal > 0) {
+           const totalMinutes = Math.round(numVal * 24 * 60);
+           const h = Math.floor(totalMinutes / 60);
+           const m = totalMinutes % 60;
+           return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+        } else {
+           const strVal = String(timeVal).trim().toUpperCase();
+           if (strVal.includes('AM') || strVal.includes('PM')) {
+              let [time, modifier] = strVal.split(' ');
+              let [hours, minutes] = time.split(':');
+              if (hours === '12') hours = '00';
+              if (modifier === 'PM') hours = String(parseInt(hours, 10) + 12);
+              return `${String(hours).padStart(2, '0')}:${String(minutes || '00').padStart(2, '0')}:00`;
+           }
+           const parts = strVal.split(':');
+           if (parts.length >= 2) {
+              return `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}:00`;
+           }
+           return null;
+        }
+      };
+
+      // 4. Data Rows ko process karo (Row 2 se shuru karo)
+      for (let r = 1; r < jsonData.length; r++) {
+        const row = jsonData[r];
+        if (!row || !row[emailColIdx]) continue; 
+
+        const email = String(row[emailColIdx]).trim().toLowerCase();
+        if (!email.includes('@')) continue; // Skip invalid emails
+
+        // B, C, D, E columns se times uthao (Pairs mein)
+        for (let c = emailColIdx + 1; c < row.length; c += 2) {
+           const currentDate = dates[c - (emailColIdx + 1)];
+           
+           // Agar us column ke upar koi valid date nahi hai (jaise TotalHours wala F column), toh skip karo
+           if (!currentDate) continue; 
+
+           const checkInStr = formatTime(row[c]);
+           const checkOutStr = (c + 1 < row.length) ? formatTime(row[c + 1]) : null;
+
+           if (checkInStr) {
+             recordsToImport.push({
+               email: email,
+               work_date: currentDate,
+               check_in: `${currentDate}T${checkInStr}+05:00`, 
+               check_out: checkOutStr ? `${currentDate}T${checkOutStr}+05:00` : null
+             });
+           }
+        }
+      }
+
+      if (recordsToImport.length === 0) {
+        throw new Error('Koi valid attendance record nahi mila. Data check karein.');
+      }
+
+      // 5. Database mein save karo
+      const { data, error } = await supabase!.rpc('bulk_import_with_new_employees', { p_records: recordsToImport });
+      
+      if (error) throw error;
+
+      setNotice(`Import successful! ${data.imported} records processed. ${data.created} new employees created.`);
+      await store.refresh();
+
+    } catch (err: any) {
+      console.error("Excel Import Error:", err);
+      store.setError(err.message || 'Excel import fail ho gaya.');
+    } finally {
+      setImporting(false);
+      e.target.value = '';
+    }
+  };
   function employeeCell(id:string|null){const e=person(id);return <div className="person"><Avatar name={e?.name||'Unknown'} small/><div><strong>{e?.name||'Unknown employee'}</strong><small>{e?.designation||'—'}</small></div></div>;}
   function employeeLink(id:string|null){
   const e=person(id);
@@ -252,6 +395,19 @@ export default function HRMS(){
     const rows=allEmployees.filter(e=>matches(e.name+' '+e.email+' '+e.department)&&(statusFilter==='all'||e.status===statusFilter));
     return <>
       {heading('Your people','A connected team starts with the right information.',{label:'Add employee',fn:()=>openEdit('employees')})}
+      <div style={{ marginBottom: '20px' }}>
+        <label className="button primary" style={{ cursor: 'pointer', display: 'inline-flex' }}>
+          <Download size={18} style={{ marginRight: '8px' }} />
+          {importing ? 'Importing...' : 'Import Excel Attendance'}
+          <input 
+            type="file" 
+            accept=".xlsx, .xls, .csv" 
+            style={{ display: 'none' }} 
+            onChange={handleExcelImport} 
+            disabled={importing}
+          />
+        </label>
+      </div>
       <div className="stats three">
         {stat('All employees',allEmployees.length,'Across your organization',Users)}
         {stat('Active employees',people.length,'Currently on the team',CheckCheck,'green')}
