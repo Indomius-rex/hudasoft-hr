@@ -1,26 +1,32 @@
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
+export const maxDuration = 60; // Vercel par function ko 60 second tak chalne dein
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { to, employeeName, requestType, requestDetails, reviewLink } = body;
 
     if (!to || !employeeName) {
-      console.log('Missing fields:', { to, employeeName });
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    console.log('Sending email to:', to);
+    // Check karein ke environment variables load hue hain ya nahi
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS_NEW) {
+      console.error("❌ SMTP Credentials Missing in .env file!");
+      return NextResponse.json({ error: 'Server configuration error: SMTP keys missing' }, { status: 500 });
+    }
 
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
-      secure: Number(process.env.SMTP_PORT) === 465,
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT) || 465, // Default 465 kar diya hai
+      secure: Number(process.env.SMTP_PORT) === 465 || Number(process.env.SMTP_PORT) === 465, 
       auth: {
         user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS_NEW,
+        pass: process.env.SMTP_PASS_NEW, // Yahan naam wahi rakhein jo .env mein hai
       },
+      connectionTimeout: 10000, // 10 sec timeout
     });
 
     const mailOptions = {
@@ -38,10 +44,11 @@ export async function POST(request: Request) {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log('Email sent successfully!');
     return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('SMTP Error Details:', error);
-    return NextResponse.json({ error: 'Failed to send email' }, { status: 500 });
+    
+  } catch (error: any) {
+    // YEH SABSE ZAROORI HAI: Terminal mein asal error dikhane ke liye
+    console.error('❌ SMTP Error Details:', error.message); 
+    return NextResponse.json({ error: 'Failed to send email', details: error.message }, { status: 500 });
   }
 }
